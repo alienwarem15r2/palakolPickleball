@@ -20,7 +20,16 @@ export default function Page() {
 
   return (
     <div className="container">
-      <h1>🏓 Pickleball Mini-Tournament</h1>
+      <h1 className="row" style={{ gap: 12, alignItems: "center" }}>
+        <img
+          src="/logo.png"
+          alt="Pikelbol Adiks Philippines logo"
+          width={48}
+          height={48}
+          style={{ borderRadius: "50%", flexShrink: 0 }}
+        />
+        Pickleball Mini-Tournament
+      </h1>
       {t.editing && (
         <div className="tabs">
           {(["setup", "courts", "standings", "games", "finals"] as Tab[]).map((x) => (
