@@ -8,6 +8,7 @@ import { CourtsScreen } from "@/components/CourtsScreen";
 import { StandingsScreen } from "@/components/StandingsScreen";
 import { FinalsScreen } from "@/components/FinalsScreen";
 import { GamesScreen } from "@/components/GamesScreen";
+import { ShareQR } from "@/components/ShareQR";
 
 type Tab = "courts" | "standings" | "finals" | "setup" | "games";
 
@@ -48,6 +49,8 @@ export default function Page() {
           ))}
         </div>
       )}
+
+      <ShareQR />
 
       <EditModeBar
         editing={t.editing}
