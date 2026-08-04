@@ -41,7 +41,7 @@ export default function Page() {
 
       <EditModeBar
         editing={t.editing}
-        onUnlock={t.setPasscode}
+        onUnlock={t.unlock}
         onLock={t.clearPasscode}
         onUndo={t.undo}
         onReset={() => {

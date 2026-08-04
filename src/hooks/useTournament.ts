@@ -39,9 +39,31 @@ export function useTournament() {
     return () => clearInterval(id);
   }, [fetchState]);
 
-  const setPasscode = useCallback((code: string) => {
-    localStorage.setItem(PASS_KEY, code);
-    setPasscodeState(code);
+  // Verify the passcode against the server before entering edit mode, so a wrong
+  // or blank code shows an error instead of silently "unlocking" into a mode
+  // where every edit fails. Returns true only when the passcode is accepted.
+  const unlock = useCallback(async (code: string): Promise<boolean> => {
+    if (!code.trim()) {
+      setError("Enter the organizer passcode.");
+      return false;
+    }
+    try {
+      const res = await fetch("/api/verify", {
+        method: "POST",
+        headers: { "x-passcode": code },
+      });
+      if (res.status !== 200) {
+        setError("Incorrect passcode. Try again.");
+        return false;
+      }
+      localStorage.setItem(PASS_KEY, code);
+      setPasscodeState(code);
+      setError(null);
+      return true;
+    } catch {
+      setError("Couldn't reach the server to check the passcode — check your connection.");
+      return false;
+    }
   }, []);
 
   const clearPasscode = useCallback(() => {
@@ -130,5 +152,5 @@ export function useTournament() {
     }
   }, [passcode]);
 
-  return { state, editing, error, setPasscode, clearPasscode, commit, undo, refetch: fetchState };
+  return { state, editing, error, unlock, clearPasscode, commit, undo, refetch: fetchState };
 }
