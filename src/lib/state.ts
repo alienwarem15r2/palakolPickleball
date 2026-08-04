@@ -15,6 +15,7 @@ export function createInitialState(): TournamentState {
     version: 1,
     phase: "setup",
     updatedAt: Date.now(),
+    targetGames: 4,
     players,
     stats,
     courts: { A: emptyCourt(), B: emptyCourt() },

@@ -1,6 +1,6 @@
 "use client";
-import { Pool, TournamentState } from "@/lib/types";
-import { recordRotationGame, selectNextChallengers } from "@/lib/engine";
+import { Pool } from "@/lib/types";
+import { recordRotationGame, nextUp } from "@/lib/engine";
 import { ScoreEntry } from "./ScoreEntry";
 import { CourtTimer } from "./CourtTimer";
 import { useTournament } from "@/hooks/useTournament";
@@ -11,7 +11,7 @@ export function CourtCard({ t, pool }: { t: T; pool: Pool }) {
   const s = t.state!;
   const c = s.courts[pool];
   const name = (id: string) => s.players.find((p) => p.id === id)?.name ?? id;
-  const nextUp = selectNextChallengers(c.queue, s.stats);
+  const upNext = nextUp(c.queue); // the next four who rotate on
 
   return (
     <div className="card">
@@ -43,8 +43,8 @@ export function CourtCard({ t, pool }: { t: T; pool: Pool }) {
         {c.queue.length === 0 ? <div className="muted">—</div> : (
           <ol style={{ margin: "4px 0 0 18px" }}>
             {c.queue.map((id) => (
-              <li key={id} className={nextUp?.includes(id) ? "nextup" : ""}>
-                {name(id)} {nextUp?.includes(id) ? "· next up" : ""}
+              <li key={id} className={upNext.includes(id) ? "nextup" : ""}>
+                {name(id)} {upNext.includes(id) ? "· next up" : ""}
                 <span className="muted"> ({s.stats[id].gp} gp)</span>
               </li>
             ))}

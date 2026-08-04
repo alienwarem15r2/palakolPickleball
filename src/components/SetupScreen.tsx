@@ -2,15 +2,14 @@
 import { useEffect, useState } from "react";
 import { useTournament } from "@/hooks/useTournament";
 import { Player, Pool } from "@/lib/types";
-import { startRotation } from "@/lib/engine";
+import { startRotation, shuffleBalancedPools } from "@/lib/engine";
 
 type T = ReturnType<typeof useTournament>;
 
-// Buffers the name locally and only commits on blur, so typing doesn't fire a
-// network write (and version bump) per keystroke.
+// Buffers a value locally and commits on blur, so typing doesn't fire a network
+// write (and version bump) per keystroke.
 function NameInput({ value, onCommit }: { value: string; onCommit: (name: string) => void }) {
   const [draft, setDraft] = useState(value);
-  // Re-sync if the underlying name changes (e.g. another editor renamed it).
   useEffect(() => setDraft(value), [value]);
   return (
     <input
@@ -25,20 +24,61 @@ function NameInput({ value, onCommit }: { value: string; onCommit: (name: string
   );
 }
 
+function GamesInput({ value, onCommit }: { value: number; onCommit: (n: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => {
+    const n = parseInt(draft, 10);
+    if (Number.isFinite(n) && n >= 1 && n !== value) onCommit(n);
+    else setDraft(String(value));
+  };
+  return (
+    <input
+      style={{ width: 56 }}
+      inputMode="numeric"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+    />
+  );
+}
+
 export function SetupScreen({ t }: { t: T }) {
   const s = t.state!;
   const pools: Pool[] = ["A", "B"];
+
+  const setSkill = (id: string, skill: "novice" | "intermediate") =>
+    t.commit((st) => ({
+      ...st,
+      players: st.players.map((x) => (x.id === id ? { ...x, skill } : x)),
+    }));
+
   return (
     <div>
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <strong>Setup — roster & pools</strong>
+          <strong>Setup — roster, levels & pools</strong>
           <button className="btn" onClick={() => t.commit(startRotation)}>
             Start rotation →
           </button>
         </div>
-        <p className="muted">
-          First 4 in each pool start on court (as two teams); the rest form the queue in listed order.
+        <div className="row" style={{ gap: 14, flexWrap: "wrap", marginTop: 10 }}>
+          <button className="btn secondary" onClick={() => t.commit(shuffleBalancedPools)}>
+            🎲 Shuffle teams (balanced by level)
+          </button>
+          <span className="row">
+            <span className="muted">Games per player before finals:</span>
+            <GamesInput
+              value={s.targetGames}
+              onCommit={(n) => t.commit((st) => ({ ...st, targetGames: n }))}
+            />
+          </span>
+        </div>
+        <p className="muted" style={{ marginTop: 8 }}>
+          Set each player&apos;s level, tap <strong>Shuffle</strong> to balance the two pools, then
+          <strong> Start rotation</strong>. Once everyone has played {s.targetGames} games you&apos;ll be
+          prompted to start the finals.
         </p>
       </div>
       <div className="grid2">
@@ -65,7 +105,17 @@ export function SetupScreen({ t }: { t: T }) {
                           }
                         />
                       </td>
-                      <td>{p.skill === "intermediate" ? "⭐" : ""}</td>
+                      <td>
+                        <button
+                          className="btn secondary"
+                          title="Tap to switch level"
+                          onClick={() =>
+                            setSkill(p.id, p.skill === "intermediate" ? "novice" : "intermediate")
+                          }
+                        >
+                          {p.skill === "intermediate" ? "⭐ Intermediate" : "Novice"}
+                        </button>
+                      </td>
                       <td>
                         <button
                           className="btn secondary"

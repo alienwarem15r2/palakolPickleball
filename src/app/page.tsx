@@ -7,8 +7,9 @@ import { SetupScreen } from "@/components/SetupScreen";
 import { CourtsScreen } from "@/components/CourtsScreen";
 import { StandingsScreen } from "@/components/StandingsScreen";
 import { FinalsScreen } from "@/components/FinalsScreen";
+import { GamesScreen } from "@/components/GamesScreen";
 
-type Tab = "courts" | "standings" | "finals" | "setup";
+type Tab = "courts" | "standings" | "finals" | "setup" | "games";
 
 export default function Page() {
   const t = useTournament();
@@ -22,7 +23,7 @@ export default function Page() {
       <h1>🏓 Pickleball Mini-Tournament</h1>
       {t.editing && (
         <div className="tabs">
-          {(["setup", "courts", "standings", "finals"] as Tab[]).map((x) => (
+          {(["setup", "courts", "standings", "games", "finals"] as Tab[]).map((x) => (
             <button key={x} className={`tab ${tab === x ? "active" : ""}`} onClick={() => setTab(x)}>
               {x[0].toUpperCase() + x.slice(1)}
             </button>
@@ -57,6 +58,7 @@ export default function Page() {
         ? <div className="card muted">Tournament not started. {t.editing ? "Use the Setup tab." : "Waiting for organizer…"}</div>
         : <CourtsScreen t={t} />)}
       {tab === "standings" && <StandingsScreen t={t} />}
+      {t.editing && tab === "games" && <GamesScreen t={t} />}
       {tab === "finals" && <FinalsScreen t={t} />}
     </div>
   );

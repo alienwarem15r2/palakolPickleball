@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { createInitialState } from "./state";
-import { recordRotationGame, selectNextChallengers, standings, qualifyFinalists } from "./engine";
+import { recordRotationGame, nextUp, standings, qualifyFinalists } from "./engine";
 import {
   seedFinalists, buildSeededTeams, shuffleTeams, startFinals, recordFinalsMatch, startRotation,
+  shuffleBalancedPools, minGamesPlayed, readyForFinals, recomputeStats, editGame,
 } from "./engine";
 
 describe("createInitialState", () => {
@@ -89,7 +90,6 @@ describe("recordRotationGame — stats", () => {
     const next = recordRotationGame(s, "A", 10, 10);
     expect(next.stats.p1.w).toBe(1); // team1 credited the win
     expect(next.stats.p3.w).toBe(0);
-    expect(next.courts.A.team1).toEqual(["p1", "p2"]); // team1 stays on court
   });
 
   it("throws on a non-finite or negative score instead of corrupting stats", () => {
@@ -105,32 +105,16 @@ describe("recordRotationGame — stats", () => {
   });
 });
 
-describe("selectNextChallengers — fairness (fewest games played)", () => {
-  it("picks the two queue members with the fewest games played", () => {
-    const stats = {
-      p5: { gp: 2, w: 0, pf: 0, pa: 0 },
-      p6: { gp: 0, w: 0, pf: 0, pa: 0 },
-      p7: { gp: 1, w: 0, pf: 0, pa: 0 },
-      p8: { gp: 0, w: 0, pf: 0, pa: 0 },
-    } as any;
-    expect(selectNextChallengers(["p5", "p6", "p7", "p8"], stats)).toEqual(["p6", "p8"]);
+describe("nextUp", () => {
+  it("returns the front four of the queue (the next players to rotate on)", () => {
+    expect(nextUp(["p5", "p6", "p7", "p8", "p9"])).toEqual(["p5", "p6", "p7", "p8"]);
   });
-
-  it("breaks ties by longest wait (earliest queue index)", () => {
-    const stats = {
-      p5: { gp: 1, w: 0, pf: 0, pa: 0 },
-      p6: { gp: 1, w: 0, pf: 0, pa: 0 },
-      p7: { gp: 1, w: 0, pf: 0, pa: 0 },
-    } as any;
-    expect(selectNextChallengers(["p5", "p6", "p7"], stats)).toEqual(["p5", "p6"]);
-  });
-
-  it("returns null when fewer than two are waiting", () => {
-    expect(selectNextChallengers(["p5"], {} as any)).toBeNull();
+  it("returns fewer than four when the queue is short", () => {
+    expect(nextUp(["p5", "p6"])).toEqual(["p5", "p6"]);
   });
 });
 
-describe("recordRotationGame — court transition", () => {
+describe("recordRotationGame — equal rotation (everyone rotates)", () => {
   function seeded() {
     const s = createInitialState();
     s.phase = "rotation";
@@ -140,23 +124,102 @@ describe("recordRotationGame — court transition", () => {
     return s;
   }
 
-  it("keeps winners on court, sends losers to back of queue, pulls next-up as new team", () => {
+  it("sends all four players to the back and brings the next four on — regardless of who won", () => {
     const s = seeded();
-    const next = recordRotationGame(s, "A", 11, 7);
+    const next = recordRotationGame(s, "A", 11, 7); // team1 won
     const c = next.courts.A;
-    expect(c.team1).toEqual(["p1", "p2"]);
-    expect(c.team2).toEqual(["p5", "p6"]);
-    expect(c.queue).toEqual(["p7", "p8", "p3", "p4"]);
+    // next four (p5..p8) come on as two new teams
+    expect(c.team1).toEqual(["p5", "p6"]);
+    expect(c.team2).toEqual(["p7", "p8"]);
+    // all four who played go to the back of the queue
+    expect(c.queue).toEqual(["p1", "p2", "p3", "p4"]);
     expect(c.timerStartedAt).toBeNull();
   });
 
-  it("when team2 wins, they become the staying team1", () => {
+  it("rotates the same way even when team2 wins (winner does not stay)", () => {
     const s = seeded();
-    const next = recordRotationGame(s, "A", 7, 11);
+    const next = recordRotationGame(s, "A", 7, 11); // team2 won
     const c = next.courts.A;
-    expect(c.team1).toEqual(["p3", "p4"]);
-    expect(c.team2).toEqual(["p5", "p6"]);
-    expect(c.queue).toEqual(["p7", "p8", "p1", "p2"]);
+    expect(c.team1).toEqual(["p5", "p6"]);
+    expect(c.team2).toEqual(["p7", "p8"]);
+    expect(c.queue).toEqual(["p1", "p2", "p3", "p4"]);
+  });
+
+  it("with exactly four players the same four re-form and keep playing", () => {
+    const s = createInitialState();
+    s.phase = "rotation";
+    s.courts.A.team1 = ["p1", "p2"];
+    s.courts.A.team2 = ["p3", "p4"];
+    s.courts.A.queue = [];
+    const c = recordRotationGame(s, "A", 11, 5).courts.A;
+    expect(c.team1).toEqual(["p1", "p2"]);
+    expect(c.team2).toEqual(["p3", "p4"]);
+    expect(c.queue).toEqual([]);
+  });
+});
+
+describe("shuffleBalancedPools", () => {
+  it("keeps all players and balances pool sizes and skill mix", () => {
+    const s = shuffleBalancedPools(createInitialState());
+    const a = s.players.filter((p) => p.pool === "A");
+    const b = s.players.filter((p) => p.pool === "B");
+    expect(a.length + b.length).toBe(23);
+    expect(Math.abs(a.length - b.length)).toBeLessThanOrEqual(1);
+    // 5 intermediates in the default roster -> split 3/2 (differ by at most 1)
+    const aInt = a.filter((p) => p.skill === "intermediate").length;
+    const bInt = b.filter((p) => p.skill === "intermediate").length;
+    expect(Math.abs(aInt - bInt)).toBeLessThanOrEqual(1);
+    expect(new Set(s.players.map((p) => p.id)).size).toBe(23);
+  });
+});
+
+describe("minGamesPlayed / readyForFinals", () => {
+  it("reports the slowest player's game count and flips ready at the target", () => {
+    const s = createInitialState();
+    s.targetGames = 2;
+    // Give everyone 2 games except one player with 1.
+    for (const p of s.players) s.stats[p.id] = { gp: 2, w: 0, pf: 0, pa: 0 };
+    s.stats[s.players[0].id] = { gp: 1, w: 0, pf: 0, pa: 0 };
+    expect(minGamesPlayed(s)).toBe(1);
+    expect(readyForFinals(s)).toBe(false);
+    // Bring the laggard up to target.
+    s.stats[s.players[0].id] = { gp: 2, w: 0, pf: 0, pa: 0 };
+    expect(minGamesPlayed(s)).toBe(2);
+    expect(readyForFinals(s)).toBe(true);
+  });
+});
+
+describe("recomputeStats / editGame", () => {
+  it("recomputes stats by replaying the game log", () => {
+    const s = createInitialState();
+    const games = [
+      { court: "A" as const, team1: ["p1", "p2"] as [string, string], team2: ["p3", "p4"] as [string, string], score1: 11, score2: 7, ts: 1 },
+      { court: "A" as const, team1: ["p1", "p2"] as [string, string], team2: ["p5", "p6"] as [string, string], score1: 9, score2: 11, ts: 2 },
+    ];
+    const stats = recomputeStats(s.players, games);
+    expect(stats.p1).toEqual({ gp: 2, w: 1, pf: 20, pa: 18 }); // won game1, lost game2
+    expect(stats.p3).toEqual({ gp: 1, w: 0, pf: 7, pa: 11 });
+    expect(stats.p5).toEqual({ gp: 1, w: 1, pf: 11, pa: 9 });
+  });
+
+  it("editing a past game's score updates the log and standings", () => {
+    let s = createInitialState();
+    s.phase = "rotation";
+    s.courts.A.team1 = ["p1", "p2"];
+    s.courts.A.team2 = ["p3", "p4"];
+    s.courts.A.queue = ["p5", "p6", "p7", "p8"];
+    s = recordRotationGame(s, "A", 11, 3); // p1,p2 win by +8
+    expect(s.stats.p1).toEqual({ gp: 1, w: 1, pf: 11, pa: 3 });
+    // Oops — it was actually 6-11 (p3,p4 won). Fix game 0.
+    s = editGame(s, 0, 6, 11);
+    expect(s.games[0]).toMatchObject({ score1: 6, score2: 11 });
+    expect(s.stats.p1).toEqual({ gp: 1, w: 0, pf: 6, pa: 11 });
+    expect(s.stats.p3).toEqual({ gp: 1, w: 1, pf: 11, pa: 6 });
+  });
+
+  it("throws when editing a game index that does not exist", () => {
+    const s = createInitialState();
+    expect(() => editGame(s, 0, 11, 5)).toThrow(/No game at index/);
   });
 });
 

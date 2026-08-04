@@ -57,6 +57,7 @@ export interface TournamentState {
   version: number;
   phase: Phase;
   updatedAt: number;
+  targetGames: number; // games each player should play before finals
   players: Player[];
   stats: Record<string, PlayerStats>;
   courts: { A: CourtState; B: CourtState };

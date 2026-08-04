@@ -205,7 +205,7 @@ export function recordRotationGame(
     { court, team1: [...team1] as Team, team2: [...team2] as Team, score1, score2, ts: Date.now() },
   ];
 
-  const nextCourt = advanceCourt(c, stats, team1, team2, score1, score2);
+  const nextCourt = advanceCourt(c, team1, team2);
 
   return {
     ...state,
@@ -216,38 +216,104 @@ export function recordRotationGame(
   };
 }
 
-export function selectNextChallengers(
-  queue: string[],
-  stats: Record<string, PlayerStats>
-): Team | null {
-  if (queue.length < 2) return null;
-  const ranked = queue
-    .map((id, index) => ({ id, index, gp: stats[id]?.gp ?? 0 }))
-    .sort((a, b) => a.gp - b.gp || a.index - b.index);
-  return [ranked[0].id, ranked[1].id];
+// Equal rotation ("everyone rotates"): after a game all four players go to the
+// back of the queue and the next four in line come on, so games played stay
+// even for everyone. The winner is irrelevant to who plays next (it only affects
+// standings), which also makes editing a past score safe — see editGame.
+function advanceCourt(court: CourtState, team1: Team, team2: Team): CourtState {
+  const queue = [...court.queue, ...team1, ...team2];
+  // A game only happens with 4 on court, so queue.length is always >= 4 here.
+  const next = queue.slice(0, 4);
+  return {
+    team1: [next[0], next[1]] as Team,
+    team2: [next[2], next[3]] as Team,
+    queue: queue.slice(4),
+    timerStartedAt: null,
+  };
 }
 
-function advanceCourt(
-  court: CourtState,
-  stats: Record<string, PlayerStats>,
-  team1: Team,
-  team2: Team,
+// The next four players who will rotate onto a court (for the "next up" hint).
+export function nextUp(queue: string[]): string[] {
+  return queue.slice(0, 4);
+}
+
+function shuffled<T>(arr: T[]): T[] {
+  const out = [...arr];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+// Randomly split every player into pools A and B, balanced by skill: shuffle the
+// intermediates and novices separately, then deal each into whichever pool is
+// currently smaller. That keeps both the skill mix and the pool sizes even, and
+// randomizes the within-pool order so starting teams differ each shuffle.
+export function shuffleBalancedPools(state: TournamentState): TournamentState {
+  const intermediates = shuffled(state.players.filter((p) => p.skill === "intermediate"));
+  const novices = shuffled(state.players.filter((p) => p.skill !== "intermediate"));
+  const A: TournamentState["players"] = [];
+  const B: TournamentState["players"] = [];
+  for (const p of [...intermediates, ...novices]) {
+    (A.length <= B.length ? A : B).push(p);
+  }
+  const players = [
+    ...A.map((p) => ({ ...p, pool: "A" as const })),
+    ...B.map((p) => ({ ...p, pool: "B" as const })),
+  ];
+  return { ...state, players, updatedAt: Date.now() };
+}
+
+// Fewest games played across all pooled players (the slowest player's count).
+export function minGamesPlayed(state: TournamentState): number {
+  const pooled = state.players.filter((p) => p.pool);
+  if (pooled.length === 0) return 0;
+  return Math.min(...pooled.map((p) => state.stats[p.id]?.gp ?? 0));
+}
+
+// Rotation is "done" once every pooled player has played the target number of
+// games — the signal to show "Ready for finals".
+export function readyForFinals(state: TournamentState): boolean {
+  const pooled = state.players.filter((p) => p.pool);
+  if (pooled.length === 0) return false;
+  return pooled.every((p) => (state.stats[p.id]?.gp ?? 0) >= state.targetGames);
+}
+
+// Rebuild every player's stats from scratch by replaying the game log. Used after
+// a past game's score is corrected so standings stay consistent.
+export function recomputeStats(
+  players: TournamentState["players"],
+  games: TournamentState["games"]
+): Record<string, PlayerStats> {
+  const stats: Record<string, PlayerStats> = {};
+  for (const p of players) stats[p.id] = { gp: 0, w: 0, pf: 0, pa: 0 };
+  const ensure = (id: string) => {
+    if (!stats[id]) stats[id] = { gp: 0, w: 0, pf: 0, pa: 0 };
+  };
+  for (const g of games) {
+    for (const id of [...g.team1, ...g.team2]) ensure(id);
+    applyGame(stats, g.team1, g.team2, g.score1, g.score2);
+  }
+  return stats;
+}
+
+// Correct a previously recorded game's score and recompute standings. Does not
+// touch the current court/queue — with equal rotation the score never affected
+// who plays next, so only the stats need fixing.
+export function editGame(
+  state: TournamentState,
+  index: number,
   score1: number,
   score2: number
-): CourtState {
-  // Copy tuples so the returned court never aliases the input court's arrays.
-  const winners: Team = [...(score1 >= score2 ? team1 : team2)] as Team;
-  const losers: Team = [...(score1 >= score2 ? team2 : team1)] as Team;
-
-  const queueWithLosers = [...court.queue, ...losers];
-
-  // Safety net: losers always re-add 2 players, so via recordRotationGame this
-  // is unreachable (queueWithLosers.length >= 2). Guards manual queue edits that
-  // could leave too few players to form a challenger team.
-  const challengers = selectNextChallengers(queueWithLosers, stats);
-  if (!challengers) {
-    return { ...court, team1: winners, team2: null, queue: queueWithLosers, timerStartedAt: null };
+): TournamentState {
+  assertScores(score1, score2);
+  if (index < 0 || index >= state.games.length) {
+    throw new Error(`No game at index ${index}`);
   }
-  const remaining = queueWithLosers.filter((id) => !challengers.includes(id));
-  return { team1: winners, team2: challengers, queue: remaining, timerStartedAt: null };
+  const games = state.games.map((g, i) =>
+    i === index ? { ...g, score1, score2 } : g
+  );
+  const stats = recomputeStats(state.players, games);
+  return { ...state, games, stats, updatedAt: Date.now() };
 }
