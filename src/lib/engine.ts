@@ -1,5 +1,21 @@
 import { CourtState, FinalsTeam, Match, Pool, PlayerStats, Team, TournamentState } from "./types";
 
+// Seed each court from its pool: first two players form team1, next two form
+// team2, and the rest queue in listed order. Moves the tournament to "rotation".
+export function startRotation(state: TournamentState): TournamentState {
+  const courts = { ...state.courts };
+  for (const pool of ["A", "B"] as Pool[]) {
+    const ids = state.players.filter((p) => p.pool === pool).map((p) => p.id);
+    courts[pool] = {
+      team1: ids.length >= 2 ? [ids[0], ids[1]] : null,
+      team2: ids.length >= 4 ? [ids[2], ids[3]] : null,
+      queue: ids.slice(4),
+      timerStartedAt: null,
+    };
+  }
+  return { ...state, phase: "rotation", courts, updatedAt: Date.now() };
+}
+
 export interface StandingRow {
   playerId: string;
   name: string;

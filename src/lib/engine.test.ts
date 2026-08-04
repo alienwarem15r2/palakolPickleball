@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createInitialState } from "./state";
 import { recordRotationGame, selectNextChallengers, standings, qualifyFinalists } from "./engine";
 import {
-  seedFinalists, buildSeededTeams, shuffleTeams, startFinals, recordFinalsMatch,
+  seedFinalists, buildSeededTeams, shuffleTeams, startFinals, recordFinalsMatch, startRotation,
 } from "./engine";
 
 describe("createInitialState", () => {
@@ -17,6 +17,33 @@ describe("createInitialState", () => {
     }
     // ids are unique
     expect(new Set(s.players.map((p) => p.id)).size).toBe(23);
+  });
+});
+
+describe("startRotation", () => {
+  it("seeds each court with first-4 as two teams and the rest as the queue", () => {
+    const s = startRotation(createInitialState());
+    expect(s.phase).toBe("rotation");
+    // Pool A has 12 players (p1..p12): p1&p2 vs p3&p4, queue p5..p12
+    expect(s.courts.A.team1).toEqual(["p1", "p2"]);
+    expect(s.courts.A.team2).toEqual(["p3", "p4"]);
+    expect(s.courts.A.queue).toEqual(["p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12"]);
+    // Pool B has 11 players (p13..p23)
+    expect(s.courts.B.team1).toEqual(["p13", "p14"]);
+    expect(s.courts.B.team2).toEqual(["p15", "p16"]);
+    expect(s.courts.B.queue).toEqual(["p17", "p18", "p19", "p20", "p21", "p22", "p23"]);
+  });
+
+  it("leaves team2 null when a pool has fewer than 4 players", () => {
+    const base = createInitialState();
+    // Move all but 3 of pool A into pool B.
+    base.players = base.players.map((p, i) =>
+      p.pool === "A" && i >= 3 ? { ...p, pool: "B" as const } : p
+    );
+    const s = startRotation(base);
+    expect(s.courts.A.team1).toEqual(["p1", "p2"]);
+    expect(s.courts.A.team2).toBeNull();
+    expect(s.courts.A.queue).toEqual([]);
   });
 });
 

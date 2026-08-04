@@ -1,25 +1,28 @@
 "use client";
+import { useEffect, useState } from "react";
 import { useTournament } from "@/hooks/useTournament";
-import { Player, Pool, TournamentState } from "@/lib/types";
+import { Player, Pool } from "@/lib/types";
+import { startRotation } from "@/lib/engine";
 
 type T = ReturnType<typeof useTournament>;
 
-function movePlayer(s: TournamentState, id: string, pool: Pool): TournamentState {
-  return { ...s, players: s.players.map((p) => (p.id === id ? { ...p, pool } : p)) };
-}
-
-function startRotation(s: TournamentState): TournamentState {
-  const courts = { ...s.courts };
-  for (const pool of ["A", "B"] as Pool[]) {
-    const ids = s.players.filter((p) => p.pool === pool).map((p) => p.id);
-    courts[pool] = {
-      team1: ids.length >= 2 ? [ids[0], ids[1]] : null,
-      team2: ids.length >= 4 ? [ids[2], ids[3]] : null,
-      queue: ids.slice(4),
-      timerStartedAt: null,
-    };
-  }
-  return { ...s, phase: "rotation", courts };
+// Buffers the name locally and only commits on blur, so typing doesn't fire a
+// network write (and version bump) per keystroke.
+function NameInput({ value, onCommit }: { value: string; onCommit: (name: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  // Re-sync if the underlying name changes (e.g. another editor renamed it).
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <input
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        const trimmed = draft.trim();
+        if (trimmed && trimmed !== value) onCommit(trimmed);
+        else setDraft(value);
+      }}
+    />
+  );
 }
 
 export function SetupScreen({ t }: { t: T }) {
@@ -50,13 +53,13 @@ export function SetupScreen({ t }: { t: T }) {
                     <tr key={p.id}>
                       <td className="muted">{i + 1}</td>
                       <td>
-                        <input
+                        <NameInput
                           value={p.name}
-                          onChange={(e) =>
+                          onCommit={(name) =>
                             t.commit((st) => ({
                               ...st,
                               players: st.players.map((x) =>
-                                x.id === p.id ? { ...x, name: e.target.value } : x
+                                x.id === p.id ? { ...x, name } : x
                               ),
                             }))
                           }
@@ -66,7 +69,14 @@ export function SetupScreen({ t }: { t: T }) {
                       <td>
                         <button
                           className="btn secondary"
-                          onClick={() => t.commit((st) => movePlayer(st, p.id, pool === "A" ? "B" : "A"))}
+                          onClick={() =>
+                            t.commit((st) => ({
+                              ...st,
+                              players: st.players.map((x) =>
+                                x.id === p.id ? { ...x, pool: pool === "A" ? "B" : "A" } : x
+                              ),
+                            }))
+                          }
                         >
                           → {pool === "A" ? "B" : "A"}
                         </button>

@@ -46,7 +46,7 @@ export default function Page() {
         onUndo={t.undo}
         onReset={() => {
           if (confirm("Reset the whole tournament to setup?")) {
-            t.commit(() => ({ ...createInitialState(), version: t.state!.version }));
+            t.commit((s) => ({ ...createInitialState(), version: s.version }));
           }
         }}
       />

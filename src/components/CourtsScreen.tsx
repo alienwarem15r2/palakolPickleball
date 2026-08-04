@@ -7,6 +7,9 @@ type T = ReturnType<typeof useTournament>;
 
 export function CourtsScreen({ t }: { t: T }) {
   const finalists = qualifyFinalists(t.state!);
+  // Finals need exactly 4 qualifiers per pool (8 seeds). A pool with fewer
+  // players would produce undefined seeds, so block starting until both are full.
+  const canStartFinals = finalists.A.length === 4 && finalists.B.length === 4;
   return (
     <div>
       <div className="grid2">
@@ -19,6 +22,7 @@ export function CourtsScreen({ t }: { t: T }) {
             <span>Rotation phase. When you're ready, lock in the finals from current standings.</span>
             <button
               className="btn"
+              disabled={!canStartFinals}
               onClick={() => {
                 if (finalists.tie && !confirm("There's a tie at the finals cut. Continue with current order?")) return;
                 t.commit((st) => {
@@ -34,7 +38,14 @@ export function CourtsScreen({ t }: { t: T }) {
               Start finals →
             </button>
           </div>
-          {finalists.tie && <div className="err">⚠ Tie at the top-4 cut — review Standings before starting.</div>}
+          {!canStartFinals && (
+            <div className="err">
+              Each pool needs at least 4 players to seed the finals (Pool A: {finalists.A.length}, Pool B: {finalists.B.length}).
+            </div>
+          )}
+          {canStartFinals && finalists.tie && (
+            <div className="err">⚠ Tie at the top-4 cut — review Standings before starting.</div>
+          )}
         </div>
       )}
     </div>
