@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createInitialState } from "./state";
-import { recordRotationGame, selectNextChallengers } from "./engine";
+import { recordRotationGame, selectNextChallengers, standings } from "./engine";
 
 describe("createInitialState", () => {
   it("has 23 players split 12/11 into pools A/B with zeroed stats", () => {
@@ -100,5 +100,26 @@ describe("recordRotationGame — court transition", () => {
     expect(c.team1).toEqual(["p3", "p4"]);
     expect(c.team2).toEqual(["p5", "p6"]);
     expect(c.queue).toEqual(["p7", "p8", "p1", "p2"]);
+  });
+});
+
+describe("standings", () => {
+  it("sorts a pool by wins desc, then point differential desc", () => {
+    const s = createInitialState();
+    s.stats.p1 = { gp: 3, w: 3, pf: 33, pa: 20 };
+    s.stats.p2 = { gp: 3, w: 2, pf: 30, pa: 25 };
+    s.stats.p3 = { gp: 3, w: 2, pf: 30, pa: 28 };
+    const rows = standings(s, "A");
+    const ids = rows.map((r) => r.playerId);
+    expect(ids.indexOf("p1")).toBe(0);
+    expect(ids.indexOf("p2")).toBeLessThan(ids.indexOf("p3"));
+    expect(rows[0]).toMatchObject({ playerId: "p1", gp: 3, w: 3, pd: 13 });
+  });
+
+  it("only includes players from the requested pool", () => {
+    const s = createInitialState();
+    const rows = standings(s, "A");
+    expect(rows).toHaveLength(12);
+    expect(rows.every((r) => s.players.find((p) => p.id === r.playerId)?.pool === "A")).toBe(true);
   });
 });

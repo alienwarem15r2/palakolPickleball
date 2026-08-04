@@ -1,5 +1,23 @@
 import { CourtState, Pool, PlayerStats, Team, TournamentState } from "./types";
 
+export interface StandingRow {
+  playerId: string;
+  name: string;
+  gp: number;
+  w: number;
+  pd: number; // point differential = pf - pa
+}
+
+export function standings(state: TournamentState, pool: Pool): StandingRow[] {
+  return state.players
+    .filter((p) => p.pool === pool)
+    .map((p) => {
+      const st = state.stats[p.id];
+      return { playerId: p.id, name: p.name, gp: st.gp, w: st.w, pd: st.pf - st.pa };
+    })
+    .sort((a, b) => b.w - a.w || b.pd - a.pd || a.name.localeCompare(b.name));
+}
+
 function cloneStats(stats: Record<string, PlayerStats>) {
   const out: Record<string, PlayerStats> = {};
   for (const k in stats) out[k] = { ...stats[k] };
