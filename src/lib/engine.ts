@@ -57,14 +57,34 @@ export function recordRotationGame(
   };
 }
 
-// Placeholder — implemented in Task 4.
+export function selectNextChallengers(
+  queue: string[],
+  stats: Record<string, PlayerStats>
+): Team | null {
+  if (queue.length < 2) return null;
+  const ranked = queue
+    .map((id, index) => ({ id, index, gp: stats[id]?.gp ?? 0 }))
+    .sort((a, b) => a.gp - b.gp || a.index - b.index);
+  return [ranked[0].id, ranked[1].id];
+}
+
 function advanceCourt(
   court: CourtState,
-  _stats: Record<string, PlayerStats>,
-  _team1: Team,
-  _team2: Team,
-  _score1: number,
-  _score2: number
+  stats: Record<string, PlayerStats>,
+  team1: Team,
+  team2: Team,
+  score1: number,
+  score2: number
 ): CourtState {
-  return court;
+  const winners: Team = score1 >= score2 ? team1 : team2;
+  const losers: Team = score1 >= score2 ? team2 : team1;
+
+  const queueWithLosers = [...court.queue, ...losers];
+
+  const challengers = selectNextChallengers(queueWithLosers, stats);
+  if (!challengers) {
+    return { ...court, team1: winners, team2: null, queue: queueWithLosers, timerStartedAt: null };
+  }
+  const remaining = queueWithLosers.filter((id) => !challengers.includes(id));
+  return { team1: winners, team2: challengers, queue: remaining, timerStartedAt: null };
 }
