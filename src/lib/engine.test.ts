@@ -49,6 +49,21 @@ describe("recordRotationGame — stats", () => {
     expect(s.games).toHaveLength(0);
     expect(next.version).toBe(s.version);
   });
+
+  it("does not mutate the input state's stats", () => {
+    const s = seededRotationState();
+    recordRotationGame(s, "A", 11, 5);
+    expect(s.stats.p1).toEqual({ gp: 0, w: 0, pf: 0, pa: 0 });
+    expect(s.stats.p3).toEqual({ gp: 0, w: 0, pf: 0, pa: 0 });
+  });
+
+  it("awards the win to team1 on a tied score (>= convention)", () => {
+    const s = seededRotationState();
+    const next = recordRotationGame(s, "A", 10, 10);
+    expect(next.stats.p1.w).toBe(1); // team1 credited the win
+    expect(next.stats.p3.w).toBe(0);
+    expect(next.courts.A.team1).toEqual(["p1", "p2"]); // team1 stays on court
+  });
 });
 
 describe("selectNextChallengers — fairness (fewest games played)", () => {
@@ -175,6 +190,19 @@ describe("finals seeding and bracket", () => {
     expect(next.phase).toBe("finals");
     expect(next.finals.matches.semi1).toMatchObject({ teamA: 0, teamB: 1 });
     expect(next.finals.matches.semi2).toMatchObject({ teamA: 2, teamB: 3 });
+    expect(next.finals.matches.final).toEqual({ teamA: null, teamB: null, score1: null, score2: null });
+    expect(next.finals.champion).toBeNull();
+  });
+
+  it("awards a tied finals match to teamA (>= convention)", () => {
+    const s = createInitialState();
+    let st = startFinals(
+      { ...s, finals: { ...s.finals, finalists: { A, B } } },
+      buildSeededTeams(seedFinalists(A, B))
+    );
+    st = recordFinalsMatch(st, "semi1", 11, 11); // tie -> teamA (0) advances
+    st = recordFinalsMatch(st, "semi2", 11, 4); // team2 advances
+    expect(st.finals.matches.final).toMatchObject({ teamA: 0, teamB: 2 });
   });
 
   it("advances semi winners into the final and records the champion", () => {
