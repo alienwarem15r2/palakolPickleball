@@ -2,7 +2,10 @@ import { createClient, VercelKV } from "@vercel/kv";
 import { TournamentState } from "./types";
 import { createInitialState } from "./state";
 
-const KEY = "tournament:state";
+// Private, app-specific key ("drawer") so this tournament's data never collides
+// with any other project sharing the same Redis database. Override with
+// KV_STATE_KEY if you ever want a second, independent tournament instance.
+const KEY = process.env.KV_STATE_KEY || "palakol:tournament:state";
 
 // Redis REST credentials come under different env var names depending on how the
 // store was added on Vercel: the classic "Vercel KV" / Marketplace Upstash inject
