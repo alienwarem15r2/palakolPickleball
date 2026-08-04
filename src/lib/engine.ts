@@ -1,4 +1,4 @@
-import { CourtState, Pool, PlayerStats, Team, TournamentState } from "./types";
+import { CourtState, FinalsTeam, Match, Pool, PlayerStats, Team, TournamentState } from "./types";
 
 export interface StandingRow {
   playerId: string;
@@ -38,6 +38,90 @@ export function qualifyFinalists(state: TournamentState): FinalistResult {
     A: aRows.slice(0, 4).map((r) => r.playerId),
     B: bRows.slice(0, 4).map((r) => r.playerId),
     tie: poolHasCutTie(aRows) || poolHasCutTie(bRows),
+  };
+}
+
+export function seedFinalists(a: string[], b: string[]): string[] {
+  const seeded: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    if (a[i]) seeded.push(a[i]);
+    if (b[i]) seeded.push(b[i]);
+  }
+  return seeded;
+}
+
+const SEED_PAIRS: [number, number][] = [[1, 8], [4, 5], [3, 6], [2, 7]];
+
+export function buildSeededTeams(seeded: string[]): FinalsTeam[] {
+  return SEED_PAIRS.map(([s1, s2]) => ({
+    seedPair: [s1, s2] as [number, number],
+    players: [seeded[s1 - 1], seeded[s2 - 1]] as Team,
+  }));
+}
+
+export function shuffleTeams(seeded: string[]): FinalsTeam[] {
+  const pool = [...seeded];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return [0, 1, 2, 3].map((k) => ({
+    seedPair: [0, 0] as [number, number],
+    players: [pool[k * 2], pool[k * 2 + 1]] as Team,
+  }));
+}
+
+export function startFinals(state: TournamentState, teams: FinalsTeam[]): TournamentState {
+  return {
+    ...state,
+    phase: "finals",
+    finals: {
+      ...state.finals,
+      teams,
+      matches: {
+        semi1: { teamA: 0, teamB: 1, score1: null, score2: null },
+        semi2: { teamA: 2, teamB: 3, score1: null, score2: null },
+        final: { teamA: null, teamB: null, score1: null, score2: null },
+      },
+      champion: null,
+    },
+    updatedAt: Date.now(),
+  };
+}
+
+function winnerIndex(m: Match): number | null {
+  if (m.teamA === null || m.teamB === null || m.score1 === null || m.score2 === null) return null;
+  return m.score1 >= m.score2 ? m.teamA : m.teamB;
+}
+
+export function recordFinalsMatch(
+  state: TournamentState,
+  key: "semi1" | "semi2" | "final",
+  score1: number,
+  score2: number
+): TournamentState {
+  const matches = {
+    semi1: { ...state.finals.matches.semi1 },
+    semi2: { ...state.finals.matches.semi2 },
+    final: { ...state.finals.matches.final },
+  };
+  matches[key] = { ...matches[key], score1, score2 };
+
+  let champion = state.finals.champion;
+  if (key === "final") {
+    champion = winnerIndex(matches.final);
+  } else {
+    const w1 = winnerIndex(matches.semi1);
+    const w2 = winnerIndex(matches.semi2);
+    if (w1 !== null && w2 !== null) {
+      matches.final = { teamA: w1, teamB: w2, score1: null, score2: null };
+    }
+  }
+
+  return {
+    ...state,
+    finals: { ...state.finals, matches, champion },
+    updatedAt: Date.now(),
   };
 }
 

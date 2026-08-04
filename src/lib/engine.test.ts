@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { createInitialState } from "./state";
 import { recordRotationGame, selectNextChallengers, standings, qualifyFinalists } from "./engine";
+import {
+  seedFinalists, buildSeededTeams, startFinals, recordFinalsMatch,
+} from "./engine";
 
 describe("createInitialState", () => {
   it("has 23 players split 12/11 into pools A/B with zeroed stats", () => {
@@ -146,5 +149,44 @@ describe("qualifyFinalists", () => {
     });
     const res = qualifyFinalists(s);
     expect(res.tie).toBe(true);
+  });
+});
+
+describe("finals seeding and bracket", () => {
+  const A = ["a1", "a2", "a3", "a4"];
+  const B = ["b1", "b2", "b3", "b4"];
+
+  it("interleaves pools into seeds 1..8", () => {
+    expect(seedFinalists(A, B)).toEqual(["a1", "b1", "a2", "b2", "a3", "b3", "a4", "b4"]);
+  });
+
+  it("builds seeded teams 1&8, 4&5, 3&6, 2&7", () => {
+    const seeded = seedFinalists(A, B);
+    const teams = buildSeededTeams(seeded);
+    expect(teams.map((t) => t.seedPair)).toEqual([[1, 8], [4, 5], [3, 6], [2, 7]]);
+    expect(teams[0].players).toEqual([seeded[0], seeded[7]]);
+    expect(teams[1].players).toEqual([seeded[3], seeded[4]]);
+  });
+
+  it("startFinals sets phase, teams, and semifinal pairings (team0v1, team2v3)", () => {
+    const s = createInitialState();
+    const withFinalists = { ...s, finals: { ...s.finals, finalists: { A, B } } };
+    const next = startFinals(withFinalists, buildSeededTeams(seedFinalists(A, B)));
+    expect(next.phase).toBe("finals");
+    expect(next.finals.matches.semi1).toMatchObject({ teamA: 0, teamB: 1 });
+    expect(next.finals.matches.semi2).toMatchObject({ teamA: 2, teamB: 3 });
+  });
+
+  it("advances semi winners into the final and records the champion", () => {
+    const s = createInitialState();
+    let st = startFinals(
+      { ...s, finals: { ...s.finals, finalists: { A, B } } },
+      buildSeededTeams(seedFinalists(A, B))
+    );
+    st = recordFinalsMatch(st, "semi1", 11, 6);
+    st = recordFinalsMatch(st, "semi2", 8, 11);
+    expect(st.finals.matches.final).toMatchObject({ teamA: 0, teamB: 3 });
+    st = recordFinalsMatch(st, "final", 11, 9);
+    expect(st.finals.champion).toBe(0);
   });
 });
