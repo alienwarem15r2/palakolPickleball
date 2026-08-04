@@ -4,6 +4,7 @@ import { recordRotationGame, nextUp, standings, qualifyFinalists } from "./engin
 import {
   seedFinalists, buildSeededTeams, shuffleTeams, startFinals, recordFinalsMatch, startRotation,
   shuffleBalancedPools, minGamesPlayed, readyForFinals, recomputeStats, editGame,
+  pairFour, pairKey, partnerHistory, reorderQueue,
 } from "./engine";
 
 describe("createInitialState", () => {
@@ -22,16 +23,19 @@ describe("createInitialState", () => {
 });
 
 describe("startRotation", () => {
-  it("seeds each court with first-4 as two teams and the rest as the queue", () => {
+  it("puts the first four of each pool on court (paired) and queues the rest", () => {
     const s = startRotation(createInitialState());
     expect(s.phase).toBe("rotation");
-    // Pool A has 12 players (p1..p12): p1&p2 vs p3&p4, queue p5..p12
-    expect(s.courts.A.team1).toEqual(["p1", "p2"]);
-    expect(s.courts.A.team2).toEqual(["p3", "p4"]);
+    // Pool A has 12 players (p1..p12): the first four take the court in some
+    // pairing, the remaining eight queue in order.
+    expect([...s.courts.A.team1!, ...s.courts.A.team2!].sort()).toEqual(
+      ["p1", "p2", "p3", "p4"].sort()
+    );
     expect(s.courts.A.queue).toEqual(["p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12"]);
     // Pool B has 11 players (p13..p23)
-    expect(s.courts.B.team1).toEqual(["p13", "p14"]);
-    expect(s.courts.B.team2).toEqual(["p15", "p16"]);
+    expect([...s.courts.B.team1!, ...s.courts.B.team2!].sort()).toEqual(
+      ["p13", "p14", "p15", "p16"].sort()
+    );
     expect(s.courts.B.queue).toEqual(["p17", "p18", "p19", "p20", "p21", "p22", "p23"]);
   });
 
@@ -44,7 +48,8 @@ describe("startRotation", () => {
     const s = startRotation(base);
     expect(s.courts.A.team1).toEqual(["p1", "p2"]);
     expect(s.courts.A.team2).toBeNull();
-    expect(s.courts.A.queue).toEqual([]);
+    // the spare player waits in the queue rather than being dropped
+    expect(s.courts.A.queue).toEqual(["p3"]);
   });
 });
 
@@ -128,11 +133,10 @@ describe("recordRotationGame — equal rotation (everyone rotates)", () => {
     const s = seeded();
     const next = recordRotationGame(s, "A", 11, 7); // team1 won
     const c = next.courts.A;
-    // next four (p5..p8) come on as two new teams
-    expect(c.team1).toEqual(["p5", "p6"]);
-    expect(c.team2).toEqual(["p7", "p8"]);
-    // all four who played go to the back of the queue
-    expect(c.queue).toEqual(["p1", "p2", "p3", "p4"]);
+    // the four who were waiting (p5..p8) come on, paired somehow
+    expect([...c.team1!, ...c.team2!].sort()).toEqual(["p5", "p6", "p7", "p8"].sort());
+    // all four who played go back to the queue
+    expect([...c.queue].sort()).toEqual(["p1", "p2", "p3", "p4"].sort());
     expect(c.timerStartedAt).toBeNull();
   });
 
@@ -140,21 +144,151 @@ describe("recordRotationGame — equal rotation (everyone rotates)", () => {
     const s = seeded();
     const next = recordRotationGame(s, "A", 7, 11); // team2 won
     const c = next.courts.A;
-    expect(c.team1).toEqual(["p5", "p6"]);
-    expect(c.team2).toEqual(["p7", "p8"]);
-    expect(c.queue).toEqual(["p1", "p2", "p3", "p4"]);
+    expect([...c.team1!, ...c.team2!].sort()).toEqual(["p5", "p6", "p7", "p8"].sort());
+    expect([...c.queue].sort()).toEqual(["p1", "p2", "p3", "p4"].sort());
   });
 
-  it("with exactly four players the same four re-form and keep playing", () => {
-    const s = createInitialState();
+  it("with exactly four players the same four keep playing, but with new partners", () => {
+    let s = createInitialState();
     s.phase = "rotation";
     s.courts.A.team1 = ["p1", "p2"];
     s.courts.A.team2 = ["p3", "p4"];
     s.courts.A.queue = [];
-    const c = recordRotationGame(s, "A", 11, 5).courts.A;
-    expect(c.team1).toEqual(["p1", "p2"]);
-    expect(c.team2).toEqual(["p3", "p4"]);
+    s = recordRotationGame(s, "A", 11, 5);
+    const c = s.courts.A;
+    // same four on court, queue still empty
+    expect([...c.team1!, ...c.team2!].sort()).toEqual(["p1", "p2", "p3", "p4"].sort());
     expect(c.queue).toEqual([]);
+    // but nobody keeps the partner they just had
+    const previous = new Set([pairKey("p1", "p2"), pairKey("p3", "p4")]);
+    expect(previous.has(pairKey(...c.team1!))).toBe(false);
+    expect(previous.has(pairKey(...c.team2!))).toBe(false);
+  });
+
+  it("keeps games played even — the fewest-played always come on next", () => {
+    let s = startRotation(createInitialState());
+    for (let i = 0; i < 12; i++) s = recordRotationGame(s, "A", 11, 5);
+    const poolA = s.players.filter((p) => p.pool === "A").map((p) => s.stats[p.id].gp);
+    // 12 players, 12 games of 4 -> everyone should be within one game of each other
+    expect(Math.max(...poolA) - Math.min(...poolA)).toBeLessThanOrEqual(1);
+  });
+
+  it("gives players a rest — nobody plays two games in a row while others wait", () => {
+    let s = startRotation(createInitialState());
+    for (let i = 0; i < 12; i++) s = recordRotationGame(s, "A", 11, 5);
+    const lineups = s.games.map((g) => new Set([...g.team1, ...g.team2]));
+    for (let i = 1; i < lineups.length; i++) {
+      const backToBack = [...lineups[i]].filter((id) => lineups[i - 1].has(id));
+      expect(backToBack, `players repeated in consecutive games: ${backToBack}`).toEqual([]);
+    }
+  });
+
+  it("gives players a different partner each time they play", () => {
+    let s = startRotation(createInitialState());
+    for (let i = 0; i < 12; i++) s = recordRotationGame(s, "A", 11, 5);
+
+    // Track the sequence of partners for every player across the whole rotation.
+    const partnersOf: Record<string, string[]> = {};
+    for (const g of s.games) {
+      for (const team of [g.team1, g.team2]) {
+        (partnersOf[team[0]] ??= []).push(team[1]);
+        (partnersOf[team[1]] ??= []).push(team[0]);
+      }
+    }
+
+    for (const [player, partners] of Object.entries(partnersOf)) {
+      // never the same partner twice in a row
+      for (let i = 1; i < partners.length; i++) {
+        expect(partners[i], `${player} repeated a partner back-to-back`).not.toBe(partners[i - 1]);
+      }
+      // and partners are genuinely varied, not just alternating between two people
+      if (partners.length >= 3) {
+        expect(new Set(partners).size).toBeGreaterThan(1);
+      }
+    }
+  });
+});
+
+describe("pairFour — balanced, fresh partnerships", () => {
+  const players = [
+    { id: "i1", name: "I1", pool: "A" as const, skill: "intermediate" as const },
+    { id: "i2", name: "I2", pool: "A" as const, skill: "intermediate" as const },
+    { id: "n1", name: "N1", pool: "A" as const, skill: "novice" as const },
+    { id: "n2", name: "N2", pool: "A" as const, skill: "novice" as const },
+  ];
+
+  const noHistory = { counts: {}, lastGame: {}, total: 0 };
+
+  it("splits two intermediates and two novices one-per-team", () => {
+    const isInt = (id: string) => id.startsWith("i");
+    for (let run = 0; run < 20; run++) {
+      const [t1, t2] = pairFour(["i1", "i2", "n1", "n2"], players, noHistory);
+      // each team gets exactly one intermediate -> both teams are I+N
+      expect(t1.filter(isInt)).toHaveLength(1);
+      expect(t2.filter(isInt)).toHaveLength(1);
+    }
+  });
+
+  it("avoids re-pairing partners who just played together", () => {
+    // i1+n1 and i2+n2 partnered in the most recent game.
+    const history = partnerHistory([
+      { court: "A", team1: ["i1", "n1"], team2: ["i2", "n2"], score1: 11, score2: 5, ts: 1 },
+    ]);
+    for (let run = 0; run < 20; run++) {
+      const [t1, t2] = pairFour(["i1", "i2", "n1", "n2"], players, history);
+      const keys = [pairKey(...t1), pairKey(...t2)].sort();
+      // the only other balanced option is i1+n2 / i2+n1
+      expect(keys).toEqual([pairKey("i1", "n2"), pairKey("i2", "n1")].sort());
+    }
+  });
+
+  it("reads partnership counts and recency from the game log", () => {
+    const h = partnerHistory([
+      { court: "A", team1: ["p1", "p2"], team2: ["p3", "p4"], score1: 11, score2: 5, ts: 1 },
+      { court: "A", team1: ["p2", "p1"], team2: ["p5", "p6"], score1: 11, score2: 9, ts: 2 },
+    ]);
+    expect(h.counts[pairKey("p1", "p2")]).toBe(2); // order-independent
+    expect(h.counts[pairKey("p3", "p4")]).toBe(1);
+    expect(h.lastGame[pairKey("p1", "p2")]).toBe(1); // most recent game index
+    expect(h.total).toBe(2);
+  });
+});
+
+describe("reorderQueue", () => {
+  it("puts the fewest-played first regardless of prior order", () => {
+    const stats = {
+      a: { gp: 2, w: 0, pf: 0, pa: 0 },
+      b: { gp: 0, w: 0, pf: 0, pa: 0 },
+      c: { gp: 1, w: 0, pf: 0, pa: 0 },
+    } as any;
+    expect(reorderQueue(["a", "b", "c"], [], stats)).toEqual(["b", "c", "a"]);
+  });
+
+  it("puts players who just came off court behind others on the same game count", () => {
+    const stats = Object.fromEntries(
+      ["w1", "w2", "f1", "f2"].map((id) => [id, { gp: 1, w: 0, pf: 0, pa: 0 }])
+    ) as any;
+    for (let run = 0; run < 20; run++) {
+      const q = reorderQueue(["w1", "w2"], ["f1", "f2"], stats);
+      // the two who were waiting come up before the two who just played
+      expect(q.slice(0, 2).sort()).toEqual(["w1", "w2"]);
+      expect(q.slice(2).sort()).toEqual(["f1", "f2"]);
+    }
+  });
+
+  it("still lets a fewer-played finisher jump ahead of a more-played waiter", () => {
+    const stats = {
+      waiter: { gp: 3, w: 0, pf: 0, pa: 0 },
+      finisher: { gp: 1, w: 0, pf: 0, pa: 0 },
+    } as any;
+    expect(reorderQueue(["waiter"], ["finisher"], stats)).toEqual(["finisher", "waiter"]);
+  });
+
+  it("keeps every player exactly once", () => {
+    const stats = Object.fromEntries(
+      ["a", "b", "c", "d"].map((id) => [id, { gp: 1, w: 0, pf: 0, pa: 0 }])
+    ) as any;
+    expect(reorderQueue(["a", "b"], ["c", "d"], stats).sort()).toEqual(["a", "b", "c", "d"]);
   });
 });
 

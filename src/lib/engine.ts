@@ -1,17 +1,128 @@
-import { CourtState, FinalsTeam, Match, Pool, PlayerStats, Team, TournamentState } from "./types";
+import { CourtState, FinalsTeam, Game, Match, Player, Pool, PlayerStats, Team, TournamentState } from "./types";
 
-// Seed each court from its pool: first two players form team1, next two form
-// team2, and the rest queue in listed order. Moves the tournament to "rotation".
+// --- Partner rotation -------------------------------------------------------
+// Players should get a different partner each game, and the two teams in a game
+// should have the same skill mix (e.g. if one team is intermediate+novice, so is
+// the other). Pairings are chosen when four players come on court, then stored,
+// so the UI never re-randomises during a render.
+
+// Order-independent key identifying a partnership.
+export function pairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+export interface PartnerHistory {
+  counts: Record<string, number>; // how often each pair has partnered
+  lastGame: Record<string, number>; // index of their most recent game together
+  total: number; // games recorded so far
+}
+
+// How often, and how recently, each pair has partnered — read from the game log.
+export function partnerHistory(games: Game[]): PartnerHistory {
+  const counts: Record<string, number> = {};
+  const lastGame: Record<string, number> = {};
+  games.forEach((g, i) => {
+    for (const team of [g.team1, g.team2]) {
+      const k = pairKey(team[0], team[1]);
+      counts[k] = (counts[k] ?? 0) + 1;
+      lastGame[k] = i;
+    }
+  });
+  return { counts, lastGame, total: games.length };
+}
+
+// The three ways to split four players into two pairs.
+const PAIRINGS: [[number, number], [number, number]][] = [
+  [[0, 1], [2, 3]],
+  [[0, 2], [1, 3]],
+  [[0, 3], [1, 2]],
+];
+
+// Split four players into two teams, preferring (1) an even skill split between
+// the teams, then (2) partnerships that haven't happened yet. Ties are broken
+// randomly so repeated foursomes don't always produce the same teams.
+export function pairFour(
+  four: string[],
+  players: Player[],
+  history: PartnerHistory
+): [Team, Team] {
+  const isIntermediate = (id: string) =>
+    players.find((p) => p.id === id)?.skill === "intermediate" ? 1 : 0;
+
+  // A pairing is worse the more often — and especially the more recently — those
+  // two have already partnered. Any given pair appears in only one of the three
+  // pairings, so a just-played partnership can always be avoided.
+  const stalePenalty = (t: Team) => {
+    const k = pairKey(t[0], t[1]);
+    const last = history.lastGame[k];
+    const gamesAgo = last === undefined ? Infinity : history.total - last;
+    const recency = gamesAgo === Infinity ? 0 : Math.max(0, 6 - gamesAgo) * 10;
+    return (history.counts[k] ?? 0) + recency;
+  };
+
+  const scored = PAIRINGS.map(([x, y]) => {
+    const t1: Team = [four[x[0]], four[x[1]]];
+    const t2: Team = [four[y[0]], four[y[1]]];
+    const skillGap = Math.abs(
+      isIntermediate(t1[0]) + isIntermediate(t1[1]) - isIntermediate(t2[0]) - isIntermediate(t2[1])
+    );
+    // Skill balance dominates; partner freshness breaks the remaining ties.
+    return {
+      teams: [t1, t2] as [Team, Team],
+      score: skillGap * 1000 + stalePenalty(t1) + stalePenalty(t2),
+    };
+  });
+
+  const best = Math.min(...scored.map((s) => s.score));
+  const options = scored.filter((s) => s.score === best);
+  return options[Math.floor(Math.random() * options.length)].teams;
+}
+
+// Rebuild the queue after a game. Ordering rules, in priority order:
+//   1. fewest games played comes up first (keeps games even),
+//   2. among players on the same game count, those who have been waiting come
+//      before the four who just walked off court,
+//   3. within each of those groups the order is shuffled, so the same foursome
+//      doesn't cycle round together forever.
+export function reorderQueue(
+  waiting: string[],
+  justFinished: string[],
+  stats: Record<string, PlayerStats>
+): string[] {
+  const byGames = (ids: string[]) => {
+    const groups = new Map<number, string[]>();
+    for (const id of shuffled(ids)) {
+      const gp = stats[id]?.gp ?? 0;
+      if (!groups.has(gp)) groups.set(gp, []);
+      groups.get(gp)!.push(id);
+    }
+    return groups;
+  };
+  const waited = byGames(waiting);
+  const finished = byGames(justFinished);
+  const levels = [...new Set([...waited.keys(), ...finished.keys()])].sort((a, b) => a - b);
+  return levels.flatMap((gp) => [...(waited.get(gp) ?? []), ...(finished.get(gp) ?? [])]);
+}
+
+// Seed each court from its pool: the first four players take the court (paired
+// for a balanced skill split) and the rest queue in listed order. Moves the
+// tournament to "rotation".
 export function startRotation(state: TournamentState): TournamentState {
   const courts = { ...state.courts };
+  const history = partnerHistory(state.games);
   for (const pool of ["A", "B"] as Pool[]) {
     const ids = state.players.filter((p) => p.pool === pool).map((p) => p.id);
-    courts[pool] = {
-      team1: ids.length >= 2 ? [ids[0], ids[1]] : null,
-      team2: ids.length >= 4 ? [ids[2], ids[3]] : null,
-      queue: ids.slice(4),
-      timerStartedAt: null,
-    };
+    if (ids.length >= 4) {
+      const [team1, team2] = pairFour(ids.slice(0, 4), state.players, history);
+      courts[pool] = { team1, team2, queue: ids.slice(4), timerStartedAt: null };
+    } else {
+      courts[pool] = {
+        team1: ids.length >= 2 ? [ids[0], ids[1]] : null,
+        team2: null,
+        queue: ids.slice(2),
+        timerStartedAt: null,
+      };
+    }
   }
   return { ...state, phase: "rotation", courts, updatedAt: Date.now() };
 }
@@ -205,7 +316,9 @@ export function recordRotationGame(
     { court, team1: [...team1] as Team, team2: [...team2] as Team, score1, score2, ts: Date.now() },
   ];
 
-  const nextCourt = advanceCourt(c, team1, team2);
+  // Count partnerships including the game just played, so the pair that just
+  // partnered is the least likely to be paired again next.
+  const nextCourt = advanceCourt(c, team1, team2, state.players, stats, partnerHistory(games));
 
   return {
     ...state,
@@ -216,17 +329,26 @@ export function recordRotationGame(
   };
 }
 
-// Equal rotation ("everyone rotates"): after a game all four players go to the
-// back of the queue and the next four in line come on, so games played stay
-// even for everyone. The winner is irrelevant to who plays next (it only affects
-// standings), which also makes editing a past score safe — see editGame.
-function advanceCourt(court: CourtState, team1: Team, team2: Team): CourtState {
-  const queue = [...court.queue, ...team1, ...team2];
+// Equal rotation ("everyone rotates"): after a game all four players rejoin the
+// queue and the next four come on, so games played stay even for everyone. The
+// winner is irrelevant to who plays next (it only affects standings), which also
+// makes editing a past score safe — see editGame. The incoming four are paired
+// fresh, so partners change from game to game.
+function advanceCourt(
+  court: CourtState,
+  team1: Team,
+  team2: Team,
+  players: Player[],
+  stats: Record<string, PlayerStats>,
+  history: PartnerHistory
+): CourtState {
+  const queue = reorderQueue(court.queue, [...team1, ...team2], stats);
   // A game only happens with 4 on court, so queue.length is always >= 4 here.
-  const next = queue.slice(0, 4);
+  const four = queue.slice(0, 4);
+  const [nextTeam1, nextTeam2] = pairFour(four, players, history);
   return {
-    team1: [next[0], next[1]] as Team,
-    team2: [next[2], next[3]] as Team,
+    team1: nextTeam1,
+    team2: nextTeam2,
     queue: queue.slice(4),
     timerStartedAt: null,
   };
