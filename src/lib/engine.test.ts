@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createInitialState } from "./state";
-import { recordRotationGame, selectNextChallengers, standings } from "./engine";
+import { recordRotationGame, selectNextChallengers, standings, qualifyFinalists } from "./engine";
 
 describe("createInitialState", () => {
   it("has 23 players split 12/11 into pools A/B with zeroed stats", () => {
@@ -121,5 +121,30 @@ describe("standings", () => {
     const rows = standings(s, "A");
     expect(rows).toHaveLength(12);
     expect(rows.every((r) => s.players.find((p) => p.id === r.playerId)?.pool === "A")).toBe(true);
+  });
+});
+
+describe("qualifyFinalists", () => {
+  it("returns top 4 by wins (tiebreak pd) from each pool", () => {
+    const s = createInitialState();
+    const a = s.players.filter((p) => p.pool === "A").map((p) => p.id);
+    a.forEach((id, i) => (s.stats[id] = { gp: 5, w: 12 - i, pf: 50, pa: 40 }));
+    const b = s.players.filter((p) => p.pool === "B").map((p) => p.id);
+    b.forEach((id, i) => (s.stats[id] = { gp: 5, w: 11 - i, pf: 50, pa: 40 }));
+    const res = qualifyFinalists(s);
+    expect(res.A).toEqual(a.slice(0, 4));
+    expect(res.B).toEqual(b.slice(0, 4));
+    expect(res.tie).toBe(false);
+  });
+
+  it("flags a tie when the 4th and 5th players are equal on wins AND point diff", () => {
+    const s = createInitialState();
+    const a = s.players.filter((p) => p.pool === "A").map((p) => p.id);
+    a.forEach((id, i) => {
+      const w = i < 3 ? 10 : 5;
+      s.stats[id] = { gp: 5, w, pf: 30, pa: 20 };
+    });
+    const res = qualifyFinalists(s);
+    expect(res.tie).toBe(true);
   });
 });

@@ -18,6 +18,29 @@ export function standings(state: TournamentState, pool: Pool): StandingRow[] {
     .sort((a, b) => b.w - a.w || b.pd - a.pd || a.name.localeCompare(b.name));
 }
 
+export interface FinalistResult {
+  A: string[];
+  B: string[];
+  tie: boolean;
+}
+
+function poolHasCutTie(rows: StandingRow[]): boolean {
+  if (rows.length <= 4) return false;
+  const fourth = rows[3];
+  const fifth = rows[4];
+  return fourth.w === fifth.w && fourth.pd === fifth.pd;
+}
+
+export function qualifyFinalists(state: TournamentState): FinalistResult {
+  const aRows = standings(state, "A");
+  const bRows = standings(state, "B");
+  return {
+    A: aRows.slice(0, 4).map((r) => r.playerId),
+    B: bRows.slice(0, 4).map((r) => r.playerId),
+    tie: poolHasCutTie(aRows) || poolHasCutTie(bRows),
+  };
+}
+
 function cloneStats(stats: Record<string, PlayerStats>) {
   const out: Record<string, PlayerStats> = {};
   for (const k in stats) out[k] = { ...stats[k] };
