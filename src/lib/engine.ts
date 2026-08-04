@@ -66,6 +66,7 @@ export function shuffleTeams(seeded: string[]): FinalsTeam[] {
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
   return [0, 1, 2, 3].map((k) => ({
+    // Random draw: seed numbers are not meaningful, so [0, 0] marks "unseeded".
     seedPair: [0, 0] as [number, number],
     players: [pool[k * 2], pool[k * 2 + 1]] as Team,
   }));
@@ -100,6 +101,7 @@ export function recordFinalsMatch(
   score1: number,
   score2: number
 ): TournamentState {
+  assertScores(score1, score2);
   const matches = {
     semi1: { ...state.finals.matches.semi1 },
     semi2: { ...state.finals.matches.semi2 },
@@ -131,6 +133,19 @@ function cloneStats(stats: Record<string, PlayerStats>) {
   return out;
 }
 
+// Guard the last pure boundary before state is persisted: reject non-finite or
+// negative scores so a bad input (e.g. an unparsed empty field -> NaN) can never
+// silently corrupt stored stats.
+function assertScores(score1: number, score2: number) {
+  for (const s of [score1, score2]) {
+    if (!Number.isFinite(s) || s < 0) {
+      throw new Error(`Invalid score: ${score1}-${score2}`);
+    }
+  }
+}
+
+// NOTE: mutates `stats` in place. Callers must pass a freshly-cloned map
+// (never `state.stats` directly), or they will corrupt shared state.
 function applyGame(
   stats: Record<string, PlayerStats>,
   team1: Team,
@@ -158,6 +173,7 @@ export function recordRotationGame(
   score1: number,
   score2: number
 ): TournamentState {
+  assertScores(score1, score2);
   const c = state.courts[court];
   if (!c.team1 || !c.team2) throw new Error(`Court ${court} has no active game`);
   const team1 = c.team1;
@@ -166,9 +182,11 @@ export function recordRotationGame(
   const stats = cloneStats(state.stats);
   applyGame(stats, team1, team2, score1, score2);
 
+  // Copy the tuples into the immutable game log so the log never aliases the
+  // live court arrays (protects the history if a later feature edits teams).
   const games = [
     ...state.games,
-    { court, team1, team2, score1, score2, ts: Date.now() },
+    { court, team1: [...team1] as Team, team2: [...team2] as Team, score1, score2, ts: Date.now() },
   ];
 
   const nextCourt = advanceCourt(c, stats, team1, team2, score1, score2);
@@ -201,11 +219,15 @@ function advanceCourt(
   score1: number,
   score2: number
 ): CourtState {
-  const winners: Team = score1 >= score2 ? team1 : team2;
-  const losers: Team = score1 >= score2 ? team2 : team1;
+  // Copy tuples so the returned court never aliases the input court's arrays.
+  const winners: Team = [...(score1 >= score2 ? team1 : team2)] as Team;
+  const losers: Team = [...(score1 >= score2 ? team2 : team1)] as Team;
 
   const queueWithLosers = [...court.queue, ...losers];
 
+  // Safety net: losers always re-add 2 players, so via recordRotationGame this
+  // is unreachable (queueWithLosers.length >= 2). Guards manual queue edits that
+  // could leave too few players to form a challenger team.
   const challengers = selectNextChallengers(queueWithLosers, stats);
   if (!challengers) {
     return { ...court, team1: winners, team2: null, queue: queueWithLosers, timerStartedAt: null };

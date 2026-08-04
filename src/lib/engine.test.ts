@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createInitialState } from "./state";
 import { recordRotationGame, selectNextChallengers, standings, qualifyFinalists } from "./engine";
 import {
-  seedFinalists, buildSeededTeams, startFinals, recordFinalsMatch,
+  seedFinalists, buildSeededTeams, shuffleTeams, startFinals, recordFinalsMatch,
 } from "./engine";
 
 describe("createInitialState", () => {
@@ -63,6 +63,18 @@ describe("recordRotationGame — stats", () => {
     expect(next.stats.p1.w).toBe(1); // team1 credited the win
     expect(next.stats.p3.w).toBe(0);
     expect(next.courts.A.team1).toEqual(["p1", "p2"]); // team1 stays on court
+  });
+
+  it("throws on a non-finite or negative score instead of corrupting stats", () => {
+    const s = seededRotationState();
+    expect(() => recordRotationGame(s, "A", NaN, 5)).toThrow(/Invalid score/);
+    expect(() => recordRotationGame(s, "A", 11, -1)).toThrow(/Invalid score/);
+  });
+
+  it("throws when the court has no active game", () => {
+    const s = createInitialState();
+    s.phase = "rotation"; // court A has no team1/team2
+    expect(() => recordRotationGame(s, "A", 11, 5)).toThrow(/no active game/);
   });
 });
 
@@ -181,6 +193,15 @@ describe("finals seeding and bracket", () => {
     expect(teams.map((t) => t.seedPair)).toEqual([[1, 8], [4, 5], [3, 6], [2, 7]]);
     expect(teams[0].players).toEqual([seeded[0], seeded[7]]);
     expect(teams[1].players).toEqual([seeded[3], seeded[4]]);
+  });
+
+  it("shuffleTeams uses all 8 finalists exactly once across 4 teams", () => {
+    const seeded = seedFinalists(A, B);
+    const teams = shuffleTeams(seeded);
+    expect(teams).toHaveLength(4);
+    const used = teams.flatMap((t) => t.players);
+    expect(used).toHaveLength(8);
+    expect(new Set(used)).toEqual(new Set(seeded));
   });
 
   it("startFinals sets phase, teams, and semifinal pairings (team0v1, team2v3)", () => {
