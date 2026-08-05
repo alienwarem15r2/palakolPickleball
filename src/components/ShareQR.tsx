@@ -10,7 +10,9 @@ export function ShareQR() {
   const [copied, setCopied] = useState(false);
 
   // window is only available on the client.
-  useEffect(() => setUrl(window.location.origin), []);
+  // Encode the page the organiser is actually on, so the open play QR lands
+  // players on the check-in rather than the tournament home page.
+  useEffect(() => setUrl(window.location.origin + window.location.pathname), []);
 
   const copy = async () => {
     try {

@@ -41,6 +41,24 @@ vars with `vercel env pull .env.local`.
   two semifinals and the final to crown the champions.
 - **Undo** reverts the last change; **Reset** clears back to setup.
 
+## Open play
+
+`/open-play` runs casual drop-in sessions, separate from the tournament:
+
+- Set 1–6 courts and tap **Start session**.
+- Players scan the same QR and tap **I'm here** to add themselves to the queue —
+  no passcode needed for that one action.
+- One first-in-first-out line feeds every court. When four are waiting and a
+  court is free, they go on automatically, paired as a mixer (fresh partners,
+  even skill split).
+- Record the score to send all four to the back of the line and pull the next
+  four on. **Rest** pauses someone without checking them out; **✕** checks them
+  out for the day.
+- **End session** shows a summary of who played and who won most.
+
+Open play and the tournament are stored separately — running one never touches
+the other.
+
 ## How it works
 
 - **Next.js (App Router)** on Vercel. The whole tournament is one JSON object in
