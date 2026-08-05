@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const PASS = "secret";
 beforeEach(() => {
-  vi.resetModules(); // the in-memory KV store is module-level; start each test clean
+  vi.resetModules();
+  // The in-memory fallback store is pinned to globalThis (so dev recompiles
+  // don't wipe it), which means resetModules alone won't clear it.
+  (globalThis as { __openPlayMemory?: Map<string, unknown> }).__openPlayMemory?.clear();
   process.env.ORGANIZER_PASSCODE = PASS;
   delete process.env.KV_REST_API_URL;
   delete process.env.KV_REST_API_TOKEN;

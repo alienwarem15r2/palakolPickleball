@@ -9,6 +9,9 @@ beforeEach(() => {
   delete process.env.UPSTASH_REDIS_REST_URL;
   delete process.env.UPSTASH_REDIS_REST_TOKEN;
   vi.resetModules();
+  // The in-memory fallback store is pinned to globalThis (so dev recompiles
+  // don't wipe it), which means resetModules alone won't clear it.
+  (globalThis as { __openPlayMemory?: Map<string, unknown> }).__openPlayMemory?.clear();
 });
 
 async function load() {

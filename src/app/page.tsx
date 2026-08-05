@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 import { useTournament } from "@/hooks/useTournament";
 import { EditModeBar } from "@/components/EditModeBar";
 import { createInitialState } from "@/lib/state";
@@ -31,6 +32,11 @@ export default function Page() {
         />
         Pickleball Mini-Tournament
       </h1>
+
+      <div className="tabs">
+        <Link className="tab" href="/open-play">🏓 Open play mode</Link>
+      </div>
+
       {t.editing && (
         <div className="tabs">
           {(["setup", "courts", "standings", "games", "finals"] as Tab[]).map((x) => (

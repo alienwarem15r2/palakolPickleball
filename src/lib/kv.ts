@@ -19,7 +19,14 @@ function kv(): VercelKV {
 // When no store is configured (e.g. local dev), fall back to a per-process
 // in-memory store so `npm run dev` works out of the box. In-memory state resets
 // on restart — local testing only.
-const memory = new Map<string, unknown>();
+//
+// Pinned to globalThis rather than module scope: in dev, Next.js re-evaluates
+// modules on recompile, which would otherwise silently wipe the session (and
+// can leave two routes reading different copies of the store).
+const globalStore = globalThis as typeof globalThis & {
+  __openPlayMemory?: Map<string, unknown>;
+};
+const memory = (globalStore.__openPlayMemory ??= new Map<string, unknown>());
 
 export async function readRecord<T>(key: string, create: () => T): Promise<T> {
   if (!hasKV) {
