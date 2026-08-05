@@ -1,6 +1,6 @@
-import { Skill } from "@/lib/types";
-import { OpenPlayPlayer, OpenPlayState } from "./types";
-import { pairFour, partnerHistory } from "@/lib/engine";
+import { PlayerStats, Skill, Team } from "@/lib/types";
+import { OpenPlayGame, OpenPlayPlayer, OpenPlayState } from "./types";
+import { assertScores, pairFour, partnerHistory, shuffled } from "@/lib/engine";
 
 // Unique id. Never reuses an id, so a new player can't inherit the record of
 // someone who checked out earlier in the session.
@@ -114,4 +114,87 @@ export function fillCourts(state: OpenPlayState): OpenPlayState {
     return { ...court, team1, team2, timerStartedAt: null };
   });
   return { ...state, courts, queue, updatedAt: Date.now() };
+}
+
+// Mutates `stats` in place — callers pass a map they own.
+function applyGame(
+  stats: Record<string, PlayerStats>,
+  team1: Team,
+  team2: Team,
+  score1: number,
+  score2: number
+) {
+  const ensure = (id: string) => (stats[id] ??= { gp: 0, w: 0, pf: 0, pa: 0 });
+  const winners = score1 >= score2 ? team1 : team2;
+  for (const id of team1) {
+    const st = ensure(id);
+    st.gp += 1; st.pf += score1; st.pa += score2;
+  }
+  for (const id of team2) {
+    const st = ensure(id);
+    st.gp += 1; st.pf += score2; st.pa += score1;
+  }
+  for (const id of winners) ensure(id).w += 1;
+}
+
+// Rebuild every player's stats by replaying the session log.
+export function recomputeStats(
+  players: readonly { id: string }[],
+  games: readonly OpenPlayGame[]
+): Record<string, PlayerStats> {
+  const stats: Record<string, PlayerStats> = {};
+  for (const p of players) stats[p.id] = { gp: 0, w: 0, pf: 0, pa: 0 };
+  for (const g of games) applyGame(stats, g.team1, g.team2, g.score1, g.score2);
+  return stats;
+}
+
+export function recordGame(
+  state: OpenPlayState,
+  courtId: string,
+  score1: number,
+  score2: number
+): OpenPlayState {
+  assertScores(score1, score2);
+  const court = state.courts.find((c) => c.id === courtId);
+  if (!court) throw new Error(`No court ${courtId}`);
+  if (!court.team1 || !court.team2) throw new Error(`Court ${courtId} has no game on`);
+
+  const stats: Record<string, PlayerStats> = {};
+  for (const id in state.stats) stats[id] = { ...state.stats[id] };
+  applyGame(stats, court.team1, court.team2, score1, score2);
+
+  const games = [
+    ...state.games,
+    {
+      courtId,
+      team1: [...court.team1] as Team,
+      team2: [...court.team2] as Team,
+      score1,
+      score2,
+      ts: Date.now(),
+    },
+  ];
+
+  // All four rejoin the back of the line. Shuffled among themselves so a
+  // repeating foursome doesn't recycle in lockstep.
+  const queue = [...state.queue, ...shuffled([...court.team1, ...court.team2])];
+  const courts = state.courts.map((c) =>
+    c.id === courtId ? { ...c, team1: null, team2: null, timerStartedAt: null } : c
+  );
+
+  return fillCourts({ ...state, stats, games, queue, courts, updatedAt: Date.now() });
+}
+
+// Correct a past score. The queue is untouched: in open play the result never
+// decides who plays next, so only the stats need rebuilding.
+export function editGame(
+  state: OpenPlayState,
+  index: number,
+  score1: number,
+  score2: number
+): OpenPlayState {
+  assertScores(score1, score2);
+  if (index < 0 || index >= state.games.length) throw new Error(`No game at index ${index}`);
+  const games = state.games.map((g, i) => (i === index ? { ...g, score1, score2 } : g));
+  return { ...state, games, stats: recomputeStats(state.players, games), updatedAt: Date.now() };
 }

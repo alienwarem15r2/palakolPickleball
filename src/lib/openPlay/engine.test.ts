@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createInitialOpenPlayState } from "./state";
-import { checkIn, renamePlayer, setSkill, setResting, removePlayer, isPlaying, fillCourts, nextUp } from "./engine";
+import type { OpenPlayState } from "./types";
+import { checkIn, renamePlayer, setSkill, setResting, removePlayer, isPlaying, fillCourts, nextUp, recordGame, editGame, recomputeStats } from "./engine";
 
 describe("createInitialOpenPlayState", () => {
   it("starts idle with two open, empty courts and nobody checked in", () => {
@@ -15,9 +16,10 @@ describe("createInitialOpenPlayState", () => {
   });
 });
 
-function running() {
-  const s = createInitialOpenPlayState();
-  return { ...s, phase: "running" as const };
+// Annotated as OpenPlayState so `phase` stays the wider union — otherwise the
+// literal "running" narrows the type and engine results can't be assigned back.
+function running(): OpenPlayState {
+  return { ...createInitialOpenPlayState(), phase: "running" };
 }
 
 describe("check-in", () => {
@@ -142,5 +144,85 @@ describe("auto-fill", () => {
   it("nextUp shows the front four of the queue", () => {
     const s = withPlayers(["a", "b", "c", "d", "e"]);
     expect(nextUp(s)).toEqual(s.queue.slice(0, 4));
+  });
+});
+
+describe("recording a game", () => {
+  // 12 players across 2 courts: 8 play, 4 genuinely wait in the queue.
+  function onePlayedGame() {
+    let s = fillCourts(
+      withPlayers(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"])
+    );
+    const court = s.courts[0];
+    const winners = court.team1!;
+    const losers = court.team2!;
+    s = recordGame(s, court.id, 11, 7);
+    return { s, winners, losers };
+  }
+
+  it("credits both teams and logs the game", () => {
+    const { s, winners, losers } = onePlayedGame();
+    for (const id of winners) expect(s.stats[id]).toEqual({ gp: 1, w: 1, pf: 11, pa: 7 });
+    for (const id of losers) expect(s.stats[id]).toEqual({ gp: 1, w: 0, pf: 7, pa: 11 });
+    expect(s.games).toHaveLength(1);
+    expect(s.games[0]).toMatchObject({ score1: 11, score2: 7 });
+  });
+
+  it("sends all four to the back of the queue and refills the court", () => {
+    const { s, winners, losers } = onePlayedGame();
+    const played = [...winners, ...losers];
+    // court 1 now holds the four who had been waiting
+    const nowOn = [...s.courts[0].team1!, ...s.courts[0].team2!];
+    expect(nowOn.some((id) => played.includes(id))).toBe(false);
+    // and the four who played are at the back of the line
+    expect([...s.queue].sort()).toEqual([...played].sort());
+  });
+
+  it("puts the same four straight back on when nobody else is waiting", () => {
+    // 8 players on 2 courts leaves no queue, so the four who just played are the
+    // only ones available — they carry on, repaired into different teams.
+    let s = fillCourts(withPlayers(["a", "b", "c", "d", "e", "f", "g", "h"]));
+    const court = s.courts[0];
+    const played = [...court.team1!, ...court.team2!];
+    s = recordGame(s, court.id, 11, 7);
+    const nowOn = [...s.courts[0].team1!, ...s.courts[0].team2!];
+    expect([...nowOn].sort()).toEqual([...played].sort());
+    expect(s.queue).toEqual([]);
+  });
+
+  it("rejects impossible scores and unknown courts", () => {
+    const s = fillCourts(withPlayers(["a", "b", "c", "d"]));
+    expect(() => recordGame(s, s.courts[0].id, NaN, 5)).toThrow(/Invalid score/);
+    expect(() => recordGame(s, "nope", 11, 5)).toThrow(/No court/);
+    expect(() => recordGame(s, s.courts[1].id, 11, 5)).toThrow(/no game/);
+  });
+});
+
+describe("correcting a game", () => {
+  it("recomputes stats and leaves the queue alone", () => {
+    let s = fillCourts(withPlayers(["a", "b", "c", "d", "e", "f", "g", "h"]));
+    const court = s.courts[0];
+    const winners = court.team1!;
+    s = recordGame(s, court.id, 11, 3);
+    const queueBefore = [...s.queue];
+    expect(s.stats[winners[0]]).toEqual({ gp: 1, w: 1, pf: 11, pa: 3 });
+
+    s = editGame(s, 0, 6, 11); // it was actually the other team's win
+    expect(s.games[0]).toMatchObject({ score1: 6, score2: 11 });
+    expect(s.stats[winners[0]]).toEqual({ gp: 1, w: 0, pf: 6, pa: 11 });
+    expect(s.queue).toEqual(queueBefore);
+    expect(() => editGame(s, 5, 11, 5)).toThrow(/No game/);
+  });
+
+  it("recomputeStats replays the log from scratch", () => {
+    const stats = recomputeStats(
+      [{ id: "x" }, { id: "y" }, { id: "z" }, { id: "w" }],
+      [
+        { courtId: "c1", team1: ["x", "y"], team2: ["z", "w"], score1: 11, score2: 4, ts: 1 },
+        { courtId: "c1", team1: ["x", "z"], team2: ["y", "w"], score1: 8, score2: 11, ts: 2 },
+      ]
+    );
+    expect(stats.x).toEqual({ gp: 2, w: 1, pf: 19, pa: 15 });
+    expect(stats.w).toEqual({ gp: 2, w: 1, pf: 15, pa: 19 });
   });
 });
