@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createInitialOpenPlayState } from "./state";
-import { checkIn, renamePlayer, setSkill, setResting, removePlayer, isPlaying } from "./engine";
+import { checkIn, renamePlayer, setSkill, setResting, removePlayer, isPlaying, fillCourts, nextUp } from "./engine";
 
 describe("createInitialOpenPlayState", () => {
   it("starts idle with two open, empty courts and nobody checked in", () => {
@@ -89,5 +89,58 @@ describe("roster edits", () => {
     expect(isPlaying(s, ids[0])).toBe(true);
     expect(() => removePlayer(s, ids[0])).toThrow(/on court/);
     expect(() => setResting(s, ids[0], true)).toThrow(/on court/);
+  });
+});
+
+function withPlayers(names: string[]) {
+  let s = running();
+  for (const n of names) s = checkIn(s, n, "novice");
+  return s;
+}
+
+describe("auto-fill", () => {
+  it("puts the front four of the queue onto an open, empty court", () => {
+    const s = fillCourts(withPlayers(["a", "b", "c", "d", "e"]));
+    const c = s.courts[0];
+    const onCourt = [...c.team1!, ...c.team2!];
+    const names = onCourt.map((id) => s.players.find((p) => p.id === id)!.name);
+    expect(names.sort()).toEqual(["a", "b", "c", "d"]);
+    // the fifth player is still waiting
+    expect(s.queue).toHaveLength(1);
+    expect(s.players.find((p) => p.id === s.queue[0])!.name).toBe("e");
+  });
+
+  it("fills several courts while there are enough players", () => {
+    const s = fillCourts(withPlayers(["a", "b", "c", "d", "e", "f", "g", "h"]));
+    expect(s.courts[0].team1).not.toBeNull();
+    expect(s.courts[1].team1).not.toBeNull();
+    expect(s.queue).toEqual([]);
+  });
+
+  it("leaves a court empty when fewer than four are waiting", () => {
+    const s = fillCourts(withPlayers(["a", "b", "c"]));
+    expect(s.courts[0].team1).toBeNull();
+    expect(s.queue).toHaveLength(3);
+  });
+
+  it("skips closed courts", () => {
+    let s = withPlayers(["a", "b", "c", "d"]);
+    s = { ...s, courts: [{ ...s.courts[0], open: false }, s.courts[1]] };
+    s = fillCourts(s);
+    expect(s.courts[0].team1).toBeNull();
+    expect(s.courts[1].team1).not.toBeNull();
+  });
+
+  it("never disturbs a court that already has a game on", () => {
+    let s = withPlayers(["a", "b", "c", "d", "e", "f", "g", "h"]);
+    s = fillCourts(s);
+    const before = s.courts[0].team1;
+    s = fillCourts(s);
+    expect(s.courts[0].team1).toEqual(before);
+  });
+
+  it("nextUp shows the front four of the queue", () => {
+    const s = withPlayers(["a", "b", "c", "d", "e"]);
+    expect(nextUp(s)).toEqual(s.queue.slice(0, 4));
   });
 });

@@ -1,5 +1,6 @@
 import { Skill } from "@/lib/types";
 import { OpenPlayPlayer, OpenPlayState } from "./types";
+import { pairFour, partnerHistory } from "@/lib/engine";
 
 // Unique id. Never reuses an id, so a new player can't inherit the record of
 // someone who checked out earlier in the session.
@@ -91,4 +92,26 @@ export function removePlayer(state: OpenPlayState, id: string): OpenPlayState {
     queue,
     updatedAt: Date.now(),
   };
+}
+
+// The next four in line (for the "next up" display).
+export function nextUp(state: OpenPlayState): string[] {
+  return state.queue.slice(0, 4);
+}
+
+// Put the front four of the queue onto every open, empty court. Teams are chosen
+// by the tournament's mixer pairing: even skill split first, then partners who
+// haven't played together this session.
+export function fillCourts(state: OpenPlayState): OpenPlayState {
+  const history = partnerHistory(state.games);
+  let queue = [...state.queue];
+  const courts = state.courts.map((court) => {
+    const empty = court.team1 === null && court.team2 === null;
+    if (!court.open || !empty || queue.length < 4) return court;
+    const four = queue.slice(0, 4);
+    queue = queue.slice(4);
+    const [team1, team2] = pairFour(four, state.players, history);
+    return { ...court, team1, team2, timerStartedAt: null };
+  });
+  return { ...state, courts, queue, updatedAt: Date.now() };
 }
