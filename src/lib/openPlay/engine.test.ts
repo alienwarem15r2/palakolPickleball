@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createInitialOpenPlayState } from "./state";
 import type { OpenPlayState } from "./types";
-import { checkIn, renamePlayer, setSkill, setResting, removePlayer, isPlaying, fillCourts, nextUp, recordGame, editGame, recomputeStats, setCourtCount, setCourtOpen, startSession, endSession } from "./engine";
+import { checkIn, renamePlayer, setSkill, setResting, removePlayer, isPlaying, fillCourts, nextUp, recordGame, editGame, recomputeStats, setCourtCount, setCourtOpen, startSession, endSession, leaderboard } from "./engine";
 
 describe("createInitialOpenPlayState", () => {
   it("starts idle with two open, empty courts and nobody checked in", () => {
@@ -288,5 +288,25 @@ describe("session lifecycle", () => {
     expect(ended.lastSummary!.rows[3].w).toBe(0);
     expect(ended.courts.every((c) => c.team1 === null)).toBe(true);
     expect(ended.queue).toEqual([]);
+  });
+});
+
+describe("leaderboard", () => {
+  it("ranks by wins, then differential, then points scored, and hides players who left", () => {
+    let s = withPlayers(["win", "diff", "pts", "gone"]);
+    const [win, diff, pts, gone] = s.players.map((p) => p.id);
+    s = {
+      ...s,
+      stats: {
+        [win]: { gp: 3, w: 3, pf: 33, pa: 20 },
+        [diff]: { gp: 3, w: 2, pf: 30, pa: 20 },
+        [pts]: { gp: 3, w: 2, pf: 24, pa: 14 }, // same diff as above, fewer points
+        [gone]: { gp: 3, w: 3, pf: 33, pa: 0 },
+      },
+      players: s.players.map((p) => (p.id === gone ? { ...p, left: true } : p)),
+    };
+    const rows = leaderboard(s);
+    expect(rows.map((r) => r.playerId)).toEqual([win, diff, pts]);
+    expect(rows[0]).toMatchObject({ name: "win", gp: 3, w: 3, pd: 13, pf: 33 });
   });
 });

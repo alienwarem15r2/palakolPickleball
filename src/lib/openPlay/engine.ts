@@ -1,7 +1,8 @@
 import { PlayerStats, Skill, Team } from "@/lib/types";
 import { OpenPlayGame, OpenPlayPlayer, OpenPlayState } from "./types";
 import { makeCourt } from "./state";
-import { assertScores, pairFour, partnerHistory, shuffled } from "@/lib/engine";
+import { assertScores, compareStanding, pairFour, partnerHistory, shuffled } from "@/lib/engine";
+import type { StandingRow } from "@/lib/engine";
 
 // Unique id. Never reuses an id, so a new player can't inherit the record of
 // someone who checked out earlier in the session.
@@ -262,4 +263,16 @@ export function endSession(state: OpenPlayState): OpenPlayState {
     lastSummary: { endedAt: Date.now(), totalGames: state.games.length, rows },
     updatedAt: Date.now(),
   };
+}
+
+// Everyone still checked in, ranked by the same rule as the tournament:
+// wins, then point differential, then total points scored.
+export function leaderboard(state: OpenPlayState): StandingRow[] {
+  return state.players
+    .filter((p) => !p.left)
+    .map((p) => {
+      const st = state.stats[p.id] ?? { gp: 0, w: 0, pf: 0, pa: 0 };
+      return { playerId: p.id, name: p.name, gp: st.gp, w: st.w, pd: st.pf - st.pa, pf: st.pf };
+    })
+    .sort(compareStanding);
 }
