@@ -310,3 +310,24 @@ describe("leaderboard", () => {
     expect(rows[0]).toMatchObject({ name: "win", gp: 3, w: 3, pd: 13, pf: 33 });
   });
 });
+
+describe("guards and reopening", () => {
+  it("rejects an impossible score when correcting a game", () => {
+    let s = fillCourts(withPlayers(["a", "b", "c", "d"]));
+    s = recordGame(s, s.courts[0].id, 11, 5);
+    expect(() => editGame(s, 0, NaN, 5)).toThrow(/Invalid score/);
+    expect(() => editGame(s, 0, 11, -1)).toThrow(/Invalid score/);
+  });
+
+  it("reopening a closed court pulls waiting players straight on", () => {
+    let s = withPlayers(["a", "b", "c", "d"]);
+    s = { ...s, courts: [{ ...s.courts[0], open: false }, s.courts[1]] };
+    s = setCourtOpen(s, s.courts[1].id, false); // both closed: nobody can play
+    expect(s.courts.every((c) => c.team1 === null)).toBe(true);
+    expect(s.queue).toHaveLength(4);
+
+    s = setCourtOpen(s, s.courts[0].id, true); // reopen -> the four go on
+    expect(s.courts[0].team1).not.toBeNull();
+    expect(s.queue).toEqual([]);
+  });
+});
