@@ -18,7 +18,9 @@ export interface PartnerHistory {
 }
 
 // How often, and how recently, each pair has partnered — read from the game log.
-export function partnerHistory(games: Game[]): PartnerHistory {
+export function partnerHistory(
+  games: readonly { team1: Team; team2: Team }[]
+): PartnerHistory {
   const counts: Record<string, number> = {};
   const lastGame: Record<string, number> = {};
   games.forEach((g, i) => {
@@ -43,7 +45,7 @@ const PAIRINGS: [[number, number], [number, number]][] = [
 // randomly so repeated foursomes don't always produce the same teams.
 export function pairFour(
   four: string[],
-  players: Player[],
+  players: readonly { id: string; skill?: Skill }[],
   history: PartnerHistory
 ): [Team, Team] {
   const isIntermediate = (id: string) =>
@@ -400,7 +402,7 @@ function cloneStats(stats: Record<string, PlayerStats>) {
 // Guard the last pure boundary before state is persisted: reject non-finite or
 // negative scores so a bad input (e.g. an unparsed empty field -> NaN) can never
 // silently corrupt stored stats.
-function assertScores(score1: number, score2: number) {
+export function assertScores(score1: number, score2: number) {
   for (const s of [score1, score2]) {
     if (!Number.isFinite(s) || s < 0) {
       throw new Error(`Invalid score: ${score1}-${score2}`);
@@ -496,7 +498,7 @@ export function nextUp(queue: string[]): string[] {
   return queue.slice(0, 4);
 }
 
-function shuffled<T>(arr: T[]): T[] {
+export function shuffled<T>(arr: T[]): T[] {
   const out = [...arr];
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { Game } from "./types";
 import { createInitialState } from "./state";
 import { recordRotationGame, nextUp, standings, qualifyFinalists } from "./engine";
 import {
@@ -6,6 +7,7 @@ import {
   shuffleBalancedPools, minGamesPlayed, readyForFinals, recomputeStats, editGame,
   pairFour, pairKey, partnerHistory, reorderQueue,
   addPlayer, removePlayer, renamePlayer, setPlayerSkill, setPlayerPool, isOnCourt,
+  shuffled, assertScores,
 } from "./engine";
 
 describe("createInitialState", () => {
@@ -234,7 +236,7 @@ describe("pairFour — balanced, fresh partnerships", () => {
     // i1+n1 and i2+n2 partnered in the most recent game.
     const history = partnerHistory([
       { court: "A", team1: ["i1", "n1"], team2: ["i2", "n2"], score1: 11, score2: 5, ts: 1 },
-    ]);
+    ] as Game[]);
     for (let run = 0; run < 20; run++) {
       const [t1, t2] = pairFour(["i1", "i2", "n1", "n2"], players, history);
       const keys = [pairKey(...t1), pairKey(...t2)].sort();
@@ -247,7 +249,7 @@ describe("pairFour — balanced, fresh partnerships", () => {
     const h = partnerHistory([
       { court: "A", team1: ["p1", "p2"], team2: ["p3", "p4"], score1: 11, score2: 5, ts: 1 },
       { court: "A", team1: ["p2", "p1"], team2: ["p5", "p6"], score1: 11, score2: 9, ts: 2 },
-    ]);
+    ] as Game[]);
     expect(h.counts[pairKey("p1", "p2")]).toBe(2); // order-independent
     expect(h.counts[pairKey("p3", "p4")]).toBe(1);
     expect(h.lastGame[pairKey("p1", "p2")]).toBe(1); // most recent game index
@@ -614,5 +616,40 @@ describe("finals seeding and bracket", () => {
     expect(st.finals.matches.final).toMatchObject({ teamA: 0, teamB: 3 });
     st = recordFinalsMatch(st, "final", 11, 9);
     expect(st.finals.champion).toBe(0);
+  });
+});
+
+describe("shared helpers are reusable by other modes", () => {
+  it("exports shuffled, which keeps every element exactly once", () => {
+    const out = shuffled([1, 2, 3, 4, 5]);
+    expect(out).toHaveLength(5);
+    expect([...out].sort()).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("exports assertScores, which rejects impossible scores", () => {
+    expect(() => assertScores(11, 5)).not.toThrow();
+    expect(() => assertScores(NaN, 5)).toThrow(/Invalid score/);
+    expect(() => assertScores(11, -1)).toThrow(/Invalid score/);
+  });
+
+  it("pairFour accepts any objects carrying id and skill", () => {
+    const minimal = [
+      { id: "a", skill: "intermediate" as const },
+      { id: "b", skill: "novice" as const },
+      { id: "c", skill: "intermediate" as const },
+      { id: "d", skill: "novice" as const },
+    ];
+    const [t1, t2] = pairFour(["a", "b", "c", "d"], minimal, { counts: {}, lastGame: {}, total: 0 });
+    const isInt = (id: string) => id === "a" || id === "c";
+    expect(t1.filter(isInt)).toHaveLength(1);
+    expect(t2.filter(isInt)).toHaveLength(1);
+  });
+
+  it("partnerHistory accepts any objects carrying team1 and team2", () => {
+    const h = partnerHistory([
+      { team1: ["a", "b"] as [string, string], team2: ["c", "d"] as [string, string] },
+    ]);
+    expect(h.counts[pairKey("a", "b")]).toBe(1);
+    expect(h.total).toBe(1);
   });
 });
