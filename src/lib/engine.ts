@@ -1,4 +1,4 @@
-import { CourtState, FinalsTeam, Game, Match, Player, Pool, PlayerStats, Team, TournamentState } from "./types";
+import { CourtState, FinalsTeam, Game, Match, Player, Pool, PlayerStats, Skill, Team, TournamentState } from "./types";
 
 // --- Partner rotation -------------------------------------------------------
 // Players should get a different partner each game, and the two teams in a game
@@ -102,6 +102,109 @@ export function reorderQueue(
   const finished = byGames(justFinished);
   const levels = [...new Set([...waited.keys(), ...finished.keys()])].sort((a, b) => a - b);
   return levels.flatMap((gp) => [...(waited.get(gp) ?? []), ...(finished.get(gp) ?? [])]);
+}
+
+// --- Roster editing ---------------------------------------------------------
+
+// Is this player currently playing (rather than waiting)? Someone on court
+// can't be removed or moved without breaking the game in progress.
+export function isOnCourt(state: TournamentState, id: string): boolean {
+  return (["A", "B"] as Pool[]).some((pool) => {
+    const c = state.courts[pool];
+    return [...(c.team1 ?? []), ...(c.team2 ?? [])].includes(id);
+  });
+}
+
+// A brand-new player id. Deliberately not "highest number + 1": ids linger in
+// the game log, the courts and the finals after a player is removed, so a reused
+// id would silently hand the new player someone else's results.
+function newPlayerId(): string {
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `p${Date.now().toString(36)}${rand}`;
+}
+
+function requireName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Player name can't be blank.");
+  return trimmed;
+}
+
+// Add a player. During a rotation they join the back of their pool's queue —
+// with zero games played they'll be first up, so latecomers start playing soon.
+export function addPlayer(
+  state: TournamentState,
+  name: string,
+  pool: Pool,
+  skill: Skill = "novice"
+): TournamentState {
+  const id = newPlayerId();
+  const players = [...state.players, { id, name: requireName(name), pool, skill }];
+  const stats = { ...state.stats, [id]: { gp: 0, w: 0, pf: 0, pa: 0 } };
+  const courts =
+    state.phase === "rotation"
+      ? {
+          ...state.courts,
+          [pool]: { ...state.courts[pool], queue: [...state.courts[pool].queue, id] },
+        }
+      : state.courts;
+  return { ...state, players, stats, courts, updatedAt: Date.now() };
+}
+
+// Remove a player from the roster and any queue. Past games keep their record,
+// so previously played results stay intact.
+export function removePlayer(state: TournamentState, id: string): TournamentState {
+  if (isOnCourt(state, id)) {
+    throw new Error("That player is on court — record the current game first.");
+  }
+  const stats = { ...state.stats };
+  delete stats[id];
+  const courts = { A: { ...state.courts.A }, B: { ...state.courts.B } };
+  for (const pool of ["A", "B"] as Pool[]) {
+    courts[pool].queue = courts[pool].queue.filter((q) => q !== id);
+  }
+  return {
+    ...state,
+    players: state.players.filter((p) => p.id !== id),
+    stats,
+    courts,
+    updatedAt: Date.now(),
+  };
+}
+
+export function renamePlayer(state: TournamentState, id: string, name: string): TournamentState {
+  const trimmed = requireName(name);
+  return {
+    ...state,
+    players: state.players.map((p) => (p.id === id ? { ...p, name: trimmed } : p)),
+    updatedAt: Date.now(),
+  };
+}
+
+export function setPlayerSkill(state: TournamentState, id: string, skill: Skill): TournamentState {
+  return {
+    ...state,
+    players: state.players.map((p) => (p.id === id ? { ...p, skill } : p)),
+    updatedAt: Date.now(),
+  };
+}
+
+// Move a player to the other pool, keeping the court queues in step so they
+// don't stay queued on the court they just left.
+export function setPlayerPool(state: TournamentState, id: string, pool: Pool): TournamentState {
+  if (isOnCourt(state, id)) {
+    throw new Error("That player is on court — record the current game first.");
+  }
+  const courts = { A: { ...state.courts.A }, B: { ...state.courts.B } };
+  for (const p of ["A", "B"] as Pool[]) {
+    courts[p].queue = courts[p].queue.filter((q) => q !== id);
+  }
+  if (state.phase === "rotation") courts[pool].queue = [...courts[pool].queue, id];
+  return {
+    ...state,
+    players: state.players.map((p) => (p.id === id ? { ...p, pool } : p)),
+    courts,
+    updatedAt: Date.now(),
+  };
 }
 
 // Seed each court from its pool: the first four players take the court (paired

@@ -5,6 +5,7 @@ import {
   seedFinalists, buildSeededTeams, shuffleTeams, startFinals, recordFinalsMatch, startRotation,
   shuffleBalancedPools, minGamesPlayed, readyForFinals, recomputeStats, editGame,
   pairFour, pairKey, partnerHistory, reorderQueue,
+  addPlayer, removePlayer, renamePlayer, setPlayerSkill, setPlayerPool, isOnCourt,
 } from "./engine";
 
 describe("createInitialState", () => {
@@ -289,6 +290,89 @@ describe("reorderQueue", () => {
       ["a", "b", "c", "d"].map((id) => [id, { gp: 1, w: 0, pf: 0, pa: 0 }])
     ) as any;
     expect(reorderQueue(["a", "b"], ["c", "d"], stats).sort()).toEqual(["a", "b", "c", "d"]);
+  });
+});
+
+describe("roster editing", () => {
+  it("adds a player with a fresh id, zeroed stats, and the chosen pool/level", () => {
+    const s = addPlayer(createInitialState(), "  Newbie  ", "B", "intermediate");
+    expect(s.players).toHaveLength(24);
+    const added = s.players[s.players.length - 1];
+    expect(added.name).toBe("Newbie"); // trimmed
+    expect(added.pool).toBe("B");
+    expect(added.skill).toBe("intermediate");
+    expect(s.stats[added.id]).toEqual({ gp: 0, w: 0, pf: 0, pa: 0 });
+    // id doesn't collide with the existing p1..p23
+    expect(s.players.filter((p) => p.id === added.id)).toHaveLength(1);
+  });
+
+  it("gives a mid-rotation joiner a place in their pool's queue", () => {
+    const rotating = startRotation(createInitialState());
+    const s = addPlayer(rotating, "Latecomer", "A");
+    const added = s.players[s.players.length - 1];
+    expect(s.courts.A.queue).toContain(added.id);
+    expect(s.courts.B.queue).not.toContain(added.id);
+  });
+
+  it("reuses no ids — a player added after a removal gets a new id", () => {
+    let s = addPlayer(createInitialState(), "First", "A");
+    const firstId = s.players[s.players.length - 1].id;
+    s = removePlayer(s, firstId);
+    s = addPlayer(s, "Second", "A");
+    expect(s.players[s.players.length - 1].id).not.toBe(firstId);
+  });
+
+  it("rejects a blank name on add or rename", () => {
+    const s = createInitialState();
+    expect(() => addPlayer(s, "   ", "A")).toThrow(/blank/);
+    expect(() => renamePlayer(s, "p1", "")).toThrow(/blank/);
+  });
+
+  it("removes a waiting player from the roster, stats, and queue", () => {
+    const rotating = startRotation(createInitialState());
+    const waiting = rotating.courts.A.queue[0];
+    const s = removePlayer(rotating, waiting);
+    expect(s.players.find((p) => p.id === waiting)).toBeUndefined();
+    expect(s.stats[waiting]).toBeUndefined();
+    expect(s.courts.A.queue).not.toContain(waiting);
+    expect(s.players).toHaveLength(22);
+  });
+
+  it("refuses to remove or move a player who is currently on court", () => {
+    const rotating = startRotation(createInitialState());
+    const playing = rotating.courts.A.team1![0];
+    expect(isOnCourt(rotating, playing)).toBe(true);
+    expect(() => removePlayer(rotating, playing)).toThrow(/on court/);
+    expect(() => setPlayerPool(rotating, playing, "B")).toThrow(/on court/);
+  });
+
+  it("keeps past games intact when a player is removed", () => {
+    let s = startRotation(createInitialState());
+    s = recordRotationGame(s, "A", 11, 5);
+    const played = s.games[0].team1[0];
+    const before = s.games.length;
+    s = removePlayer(s, played); // they're back in the queue now, so removable
+    expect(s.games).toHaveLength(before);
+    expect(s.games[0].team1).toContain(played);
+  });
+
+  it("renames and re-levels a player without touching anyone else", () => {
+    let s = renamePlayer(createInitialState(), "p1", "  Renamed  ");
+    s = setPlayerSkill(s, "p1", "novice");
+    expect(s.players.find((p) => p.id === "p1")).toMatchObject({
+      name: "Renamed",
+      skill: "novice",
+    });
+    expect(s.players.find((p) => p.id === "p2")!.name).toBe("Kaye");
+  });
+
+  it("moves a waiting player between pools and between court queues", () => {
+    const rotating = startRotation(createInitialState());
+    const waiting = rotating.courts.A.queue[0];
+    const s = setPlayerPool(rotating, waiting, "B");
+    expect(s.players.find((p) => p.id === waiting)!.pool).toBe("B");
+    expect(s.courts.A.queue).not.toContain(waiting);
+    expect(s.courts.B.queue).toContain(waiting);
   });
 });
 
