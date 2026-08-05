@@ -106,19 +106,35 @@ export function nextUp(state: OpenPlayState): string[] {
 // haven't played together this session.
 export function fillCourts(state: OpenPlayState): OpenPlayState {
   const history = partnerHistory(state.games);
+  // Sequential on purpose: each court consumes from the front of the queue, so
+  // the courts are filled in order and later ones see the shortened queue.
   let queue = [...state.queue];
-  const courts = state.courts.map((court) => {
+  const courts: OpenPlayState["courts"] = [];
+  for (const court of state.courts) {
     const empty = court.team1 === null && court.team2 === null;
-    if (!court.open || !empty || queue.length < 4) return court;
-    const four = queue.slice(0, 4);
+    if (!court.open || !empty || queue.length < 4) {
+      courts.push(court);
+      continue;
+    }
+    const [team1, team2] = pairFour(queue.slice(0, 4), state.players, history);
     queue = queue.slice(4);
-    const [team1, team2] = pairFour(four, state.players, history);
-    return { ...court, team1, team2, timerStartedAt: null };
-  });
+    courts.push({ ...court, team1, team2, timerStartedAt: null });
+  }
   return { ...state, courts, queue, updatedAt: Date.now() };
 }
 
-// Mutates `stats` in place — callers pass a map they own.
+// Copy the stats map so `applyGame` can mutate freely without touching the
+// caller's state. PlayerStats is flat (all numbers), so one level is enough.
+function cloneStats(stats: Record<string, PlayerStats>): Record<string, PlayerStats> {
+  const out: Record<string, PlayerStats> = {};
+  for (const id in stats) out[id] = { ...stats[id] };
+  return out;
+}
+
+// Mutates `stats` in place — callers pass a map they own, seeded with every
+// player id the game references. Deliberately strict: a missing id means the
+// roster and the game log have drifted apart, which should surface rather than
+// be silently absorbed as a fabricated entry.
 function applyGame(
   stats: Record<string, PlayerStats>,
   team1: Team,
@@ -126,27 +142,32 @@ function applyGame(
   score1: number,
   score2: number
 ) {
-  const ensure = (id: string) => (stats[id] ??= { gp: 0, w: 0, pf: 0, pa: 0 });
   const winners = score1 >= score2 ? team1 : team2;
   for (const id of team1) {
-    const st = ensure(id);
-    st.gp += 1; st.pf += score1; st.pa += score2;
+    stats[id].gp += 1; stats[id].pf += score1; stats[id].pa += score2;
   }
   for (const id of team2) {
-    const st = ensure(id);
-    st.gp += 1; st.pf += score2; st.pa += score1;
+    stats[id].gp += 1; stats[id].pf += score2; stats[id].pa += score1;
   }
-  for (const id of winners) ensure(id).w += 1;
+  for (const id of winners) stats[id].w += 1;
 }
 
-// Rebuild every player's stats by replaying the session log.
+// Rebuild every player's stats by replaying the session log. Ids that appear in
+// the log but not in `players` are seeded here — the one deliberate place where
+// a hard-removed player's past games stay computable.
 export function recomputeStats(
   players: readonly { id: string }[],
   games: readonly OpenPlayGame[]
 ): Record<string, PlayerStats> {
   const stats: Record<string, PlayerStats> = {};
-  for (const p of players) stats[p.id] = { gp: 0, w: 0, pf: 0, pa: 0 };
-  for (const g of games) applyGame(stats, g.team1, g.team2, g.score1, g.score2);
+  const seed = (id: string) => {
+    if (!stats[id]) stats[id] = { gp: 0, w: 0, pf: 0, pa: 0 };
+  };
+  for (const p of players) seed(p.id);
+  for (const g of games) {
+    for (const id of [...g.team1, ...g.team2]) seed(id);
+    applyGame(stats, g.team1, g.team2, g.score1, g.score2);
+  }
   return stats;
 }
 
@@ -161,8 +182,7 @@ export function recordGame(
   if (!court) throw new Error(`No court ${courtId}`);
   if (!court.team1 || !court.team2) throw new Error(`Court ${courtId} has no game on`);
 
-  const stats: Record<string, PlayerStats> = {};
-  for (const id in state.stats) stats[id] = { ...state.stats[id] };
+  const stats = cloneStats(state.stats);
   applyGame(stats, court.team1, court.team2, score1, score2);
 
   const games = [
@@ -249,10 +269,10 @@ export function endSession(state: OpenPlayState): OpenPlayState {
   const rows = state.players
     .map((p) => {
       const st = state.stats[p.id] ?? { gp: 0, w: 0, pf: 0, pa: 0 };
-      return { name: p.name, gp: st.gp, w: st.w, pd: st.pf - st.pa, pf: st.pf };
+      return { playerId: p.id, name: p.name, gp: st.gp, w: st.w, pd: st.pf - st.pa, pf: st.pf };
     })
     .filter((r) => r.gp > 0)
-    .sort((a, b) => b.w - a.w || b.pd - a.pd || b.pf - a.pf)
+    .sort(compareStanding) // same ranking rule as the live leaderboard
     .map(({ name, gp, w, pd }) => ({ name, gp, w, pd }));
 
   return {

@@ -331,3 +331,51 @@ describe("guards and reopening", () => {
     expect(s.queue).toEqual([]);
   });
 });
+
+describe("purity — engine never mutates the state it is given", () => {
+  // The React client applies these transforms optimistically and rolls back on
+  // failure, so any in-place mutation would corrupt the rollback snapshot.
+  function deepFreeze<T>(value: T): T {
+    if (value && typeof value === "object") {
+      Object.values(value as Record<string, unknown>).forEach(deepFreeze);
+      Object.freeze(value);
+    }
+    return value;
+  }
+
+  it("recordGame, fillCourts and editGame leave a frozen input intact", () => {
+    const base = fillCourts(
+      withPlayers(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"])
+    );
+    const frozen = deepFreeze(structuredClone(base));
+
+    const played = recordGame(frozen, frozen.courts[0].id, 11, 7);
+    expect(played.games).toHaveLength(1);
+    expect(frozen.games).toHaveLength(0); // input untouched
+
+    expect(() => fillCourts(frozen)).not.toThrow();
+    expect(() => editGame(deepFreeze(structuredClone(played)), 0, 6, 11)).not.toThrow();
+  });
+
+  it("check-in and roster edits leave a frozen input intact", () => {
+    const frozen = deepFreeze(structuredClone(withPlayers(["a", "b"])));
+    const id = frozen.players[0].id;
+    expect(() => checkIn(frozen, "c", "novice")).not.toThrow();
+    expect(() => renamePlayer(frozen, id, "z")).not.toThrow();
+    expect(() => setResting(frozen, id, true)).not.toThrow();
+    expect(() => removePlayer(frozen, id)).not.toThrow();
+    expect(frozen.players).toHaveLength(2);
+  });
+});
+
+describe("adding a court", () => {
+  it("auto-fills a newly added court from the waiting queue", () => {
+    // 8 waiting, 1 court: four play, four wait until a second court appears.
+    let s = setCourtCount(withPlayers(["a", "b", "c", "d", "e", "f", "g", "h"]), 1);
+    s = fillCourts(s);
+    expect(s.queue).toHaveLength(4);
+    s = setCourtCount(s, 2);
+    expect(s.courts[1].team1).not.toBeNull();
+    expect(s.queue).toEqual([]);
+  });
+});
