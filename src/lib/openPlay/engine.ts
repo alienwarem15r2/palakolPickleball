@@ -1,5 +1,6 @@
 import { PlayerStats, Skill, Team } from "@/lib/types";
 import { OpenPlayGame, OpenPlayPlayer, OpenPlayState } from "./types";
+import { makeCourt } from "./state";
 import { assertScores, pairFour, partnerHistory, shuffled } from "@/lib/engine";
 
 // Unique id. Never reuses an id, so a new player can't inherit the record of
@@ -197,4 +198,68 @@ export function editGame(
   if (index < 0 || index >= state.games.length) throw new Error(`No game at index ${index}`);
   const games = state.games.map((g, i) => (i === index ? { ...g, score1, score2 } : g));
   return { ...state, games, stats: recomputeStats(state.players, games), updatedAt: Date.now() };
+}
+
+function courtHasGame(court: { team1: Team | null; team2: Team | null }): boolean {
+  return court.team1 !== null || court.team2 !== null;
+}
+
+export function setCourtCount(state: OpenPlayState, count: number): OpenPlayState {
+  if (!Number.isInteger(count) || count < 1 || count > 6) {
+    throw new Error("Court count must be between 1 and 6.");
+  }
+  if (count < state.courts.length) {
+    const dropped = state.courts.slice(count);
+    if (dropped.some(courtHasGame)) {
+      throw new Error("That court has a game on — record it before removing the court.");
+    }
+    return { ...state, courts: state.courts.slice(0, count), updatedAt: Date.now() };
+  }
+  const added = Array.from({ length: count - state.courts.length }, (_, i) =>
+    makeCourt(state.courts.length + i + 1)
+  );
+  return fillCourts({ ...state, courts: [...state.courts, ...added], updatedAt: Date.now() });
+}
+
+export function setCourtOpen(state: OpenPlayState, courtId: string, open: boolean): OpenPlayState {
+  const court = state.courts.find((c) => c.id === courtId);
+  if (!court) throw new Error(`No court ${courtId}`);
+  if (!open && courtHasGame(court)) {
+    throw new Error("That court has a game on — record it before closing the court.");
+  }
+  const courts = state.courts.map((c) => (c.id === courtId ? { ...c, open } : c));
+  return fillCourts({ ...state, courts, updatedAt: Date.now() });
+}
+
+export function startSession(state: OpenPlayState): OpenPlayState {
+  return {
+    ...state,
+    phase: "running",
+    players: [],
+    queue: [],
+    stats: {},
+    games: [],
+    courts: state.courts.map((c) => ({ ...c, team1: null, team2: null, timerStartedAt: null })),
+    updatedAt: Date.now(),
+  };
+}
+
+export function endSession(state: OpenPlayState): OpenPlayState {
+  const rows = state.players
+    .map((p) => {
+      const st = state.stats[p.id] ?? { gp: 0, w: 0, pf: 0, pa: 0 };
+      return { name: p.name, gp: st.gp, w: st.w, pd: st.pf - st.pa, pf: st.pf };
+    })
+    .filter((r) => r.gp > 0)
+    .sort((a, b) => b.w - a.w || b.pd - a.pd || b.pf - a.pf)
+    .map(({ name, gp, w, pd }) => ({ name, gp, w, pd }));
+
+  return {
+    ...state,
+    phase: "ended",
+    queue: [],
+    courts: state.courts.map((c) => ({ ...c, team1: null, team2: null, timerStartedAt: null })),
+    lastSummary: { endedAt: Date.now(), totalGames: state.games.length, rows },
+    updatedAt: Date.now(),
+  };
 }

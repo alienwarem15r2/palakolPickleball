@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createInitialOpenPlayState } from "./state";
 import type { OpenPlayState } from "./types";
-import { checkIn, renamePlayer, setSkill, setResting, removePlayer, isPlaying, fillCourts, nextUp, recordGame, editGame, recomputeStats } from "./engine";
+import { checkIn, renamePlayer, setSkill, setResting, removePlayer, isPlaying, fillCourts, nextUp, recordGame, editGame, recomputeStats, setCourtCount, setCourtOpen, startSession, endSession } from "./engine";
 
 describe("createInitialOpenPlayState", () => {
   it("starts idle with two open, empty courts and nobody checked in", () => {
@@ -224,5 +224,69 @@ describe("correcting a game", () => {
     );
     expect(stats.x).toEqual({ gp: 2, w: 1, pf: 19, pa: 15 });
     expect(stats.w).toEqual({ gp: 2, w: 1, pf: 15, pa: 19 });
+  });
+});
+
+describe("courts", () => {
+  it("grows and shrinks the number of courts", () => {
+    let s = createInitialOpenPlayState();
+    s = setCourtCount(s, 4);
+    expect(s.courts.map((c) => c.label)).toEqual(["Court 1", "Court 2", "Court 3", "Court 4"]);
+    s = setCourtCount(s, 1);
+    expect(s.courts).toHaveLength(1);
+  });
+
+  it("rejects a court count outside 1-6", () => {
+    const s = createInitialOpenPlayState();
+    expect(() => setCourtCount(s, 0)).toThrow(/between 1 and 6/);
+    expect(() => setCourtCount(s, 7)).toThrow(/between 1 and 6/);
+  });
+
+  it("refuses to remove or close a court with a game on", () => {
+    // 8 players fill both courts, so shrinking would drop a court mid-game.
+    const s = fillCourts(withPlayers(["a", "b", "c", "d", "e", "f", "g", "h"]));
+    expect(() => setCourtCount(s, 1)).toThrow(/game on/);
+    expect(() => setCourtOpen(s, s.courts[0].id, false)).toThrow(/game on/);
+  });
+
+  it("allows shrinking when the courts being dropped are empty", () => {
+    // 4 players fill only court 1; court 2 is empty and can go.
+    const s = fillCourts(withPlayers(["a", "b", "c", "d"]));
+    expect(setCourtCount(s, 1).courts).toHaveLength(1);
+  });
+
+  it("closing an empty court takes it out of rotation", () => {
+    let s = createInitialOpenPlayState();
+    s = setCourtOpen(s, "c2", false);
+    expect(s.courts.find((c) => c.id === "c2")!.open).toBe(false);
+  });
+});
+
+describe("session lifecycle", () => {
+  it("starting clears everyone but keeps the court count and last summary", () => {
+    let s = fillCourts(withPlayers(["a", "b", "c", "d"]));
+    s = setCourtCount(s, 3);
+    s = { ...s, lastSummary: { endedAt: 1, totalGames: 9, rows: [] } };
+    const started = startSession(s);
+    expect(started.phase).toBe("running");
+    expect(started.players).toEqual([]);
+    expect(started.queue).toEqual([]);
+    expect(started.games).toEqual([]);
+    expect(started.courts).toHaveLength(3);
+    expect(started.courts.every((c) => c.team1 === null)).toBe(true);
+    expect(started.lastSummary!.totalGames).toBe(9);
+  });
+
+  it("ending builds a summary of everyone who took part, best first", () => {
+    let s = fillCourts(withPlayers(["a", "b", "c", "d"]));
+    s = recordGame(s, s.courts[0].id, 11, 5);
+    const ended = endSession(s);
+    expect(ended.phase).toBe("ended");
+    expect(ended.lastSummary!.totalGames).toBe(1);
+    expect(ended.lastSummary!.rows).toHaveLength(4);
+    expect(ended.lastSummary!.rows[0].w).toBe(1); // winners ranked first
+    expect(ended.lastSummary!.rows[3].w).toBe(0);
+    expect(ended.courts.every((c) => c.team1 === null)).toBe(true);
+    expect(ended.queue).toEqual([]);
   });
 });
