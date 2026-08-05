@@ -236,6 +236,17 @@ export interface StandingRow {
   gp: number;
   w: number;
   pd: number; // point differential = pf - pa
+  pf: number; // total points scored
+}
+
+// Ranking order: wins, then point differential, then total points scored.
+// Deliberately no name tiebreak — sorting by name would hand the last finals
+// spot to whoever is earlier in the alphabet. Array.prototype.sort is stable, so
+// players who match on all three keep their roster order until a draw is run.
+// (A fourth "fewest points allowed" rule would be a no-op: points allowed is
+// pf - pd, so equal pd and equal pf forces equal points allowed.)
+export function compareStanding(a: StandingRow, b: StandingRow): number {
+  return b.w - a.w || b.pd - a.pd || b.pf - a.pf;
 }
 
 export function standings(state: TournamentState, pool: Pool): StandingRow[] {
@@ -243,9 +254,9 @@ export function standings(state: TournamentState, pool: Pool): StandingRow[] {
     .filter((p) => p.pool === pool)
     .map((p) => {
       const st = state.stats[p.id];
-      return { playerId: p.id, name: p.name, gp: st.gp, w: st.w, pd: st.pf - st.pa };
+      return { playerId: p.id, name: p.name, gp: st.gp, w: st.w, pd: st.pf - st.pa, pf: st.pf };
     })
-    .sort((a, b) => b.w - a.w || b.pd - a.pd || a.name.localeCompare(b.name));
+    .sort(compareStanding);
 }
 
 export interface FinalistResult {
@@ -254,20 +265,43 @@ export interface FinalistResult {
   tie: boolean;
 }
 
+// True when the players either side of the top-4 cut are level on every
+// statistic, so nothing but a draw can separate them.
 function poolHasCutTie(rows: StandingRow[]): boolean {
   if (rows.length <= 4) return false;
-  const fourth = rows[3];
-  const fifth = rows[4];
-  return fourth.w === fifth.w && fourth.pd === fifth.pd;
+  return compareStanding(rows[3], rows[4]) === 0;
 }
 
-export function qualifyFinalists(state: TournamentState): FinalistResult {
-  const aRows = standings(state, "A");
-  const bRows = standings(state, "B");
+// Randomise the order of players who are exactly level, so that when the cut
+// falls inside a tied group the spot is won by a draw rather than by list order.
+function drawAmongTied(rows: StandingRow[]): StandingRow[] {
+  const out: StandingRow[] = [];
+  let i = 0;
+  while (i < rows.length) {
+    let j = i + 1;
+    while (j < rows.length && compareStanding(rows[i], rows[j]) === 0) j++;
+    out.push(...(j - i > 1 ? shuffled(rows.slice(i, j)) : rows.slice(i, j)));
+    i = j;
+  }
+  return out;
+}
+
+// Top four per pool. Pass { drawTies: true } when locking the finals in, so a
+// dead heat at the cut is settled by a random draw instead of list order.
+export function qualifyFinalists(
+  state: TournamentState,
+  options: { drawTies?: boolean } = {}
+): FinalistResult {
+  const rank = (pool: Pool) => {
+    const rows = standings(state, pool);
+    return options.drawTies ? drawAmongTied(rows) : rows;
+  };
+  const aRows = rank("A");
+  const bRows = rank("B");
   return {
     A: aRows.slice(0, 4).map((r) => r.playerId),
     B: bRows.slice(0, 4).map((r) => r.playerId),
-    tie: poolHasCutTie(aRows) || poolHasCutTie(bRows),
+    tie: poolHasCutTie(standings(state, "A")) || poolHasCutTie(standings(state, "B")),
   };
 }
 

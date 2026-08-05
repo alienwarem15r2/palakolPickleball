@@ -16,9 +16,14 @@ export function CourtsScreen({ t }: { t: T }) {
   const canStartFinals = finalists.A.length === 4 && finalists.B.length === 4;
   const ready = readyForFinals(s);
   const minGames = minGamesPlayed(s);
+  const finalsUnderway = s.phase === "finals";
   return (
     <div>
-      {ready ? (
+      {finalsUnderway ? (
+        <div className="card" style={{ borderColor: "var(--accent2)", fontWeight: 600 }}>
+          🏆 Finals are underway — see the <strong>Finals</strong> tab.
+        </div>
+      ) : ready ? (
         <div className="card" style={{ borderColor: "var(--accent)", color: "var(--accent)", fontWeight: 600 }}>
           🏁 Everyone has played {s.targetGames} games — ready for finals!{" "}
           {t.editing ? "Tap “Start finals” below." : "Waiting for the organizer to start the finals."}
@@ -33,7 +38,9 @@ export function CourtsScreen({ t }: { t: T }) {
         <CourtCard t={t} pool="A" />
         <CourtCard t={t} pool="B" />
       </div>
-      {t.editing && (
+      {/* Hidden once the finals start: re-running it would redo the draw and
+          wipe any semifinal scores already recorded. */}
+      {t.editing && !finalsUnderway && (
         <div className="card">
           <div className="row" style={{ justifyContent: "space-between" }}>
             <span>Rotation phase. When you're ready, lock in the finals from current standings.</span>
@@ -41,9 +48,15 @@ export function CourtsScreen({ t }: { t: T }) {
               className="btn"
               disabled={!canStartFinals}
               onClick={() => {
-                if (finalists.tie && !confirm("There's a tie at the finals cut. Continue with current order?")) return;
+                if (
+                  finalists.tie &&
+                  !confirm(
+                    "Players are dead level at the last finals spot — wins, point differential and total points all equal.\n\nOK will settle it with a random draw."
+                  )
+                ) return;
                 t.commit((st) => {
-                  const q = qualifyFinalists(st);
+                  // drawTies: a genuine dead heat is decided by a draw, never by list order.
+                  const q = qualifyFinalists(st, { drawTies: true });
                   const seeded = seedFinalists(q.A, q.B);
                   return startFinals(
                     { ...st, finals: { ...st.finals, finalists: { A: q.A, B: q.B } } },
@@ -61,7 +74,10 @@ export function CourtsScreen({ t }: { t: T }) {
             </div>
           )}
           {canStartFinals && finalists.tie && (
-            <div className="err">⚠ Tie at the top-4 cut — review Standings before starting.</div>
+            <div className="err">
+              ⚠ Dead heat at the last finals spot — level on wins, differential and points scored.
+              Starting the finals will settle it with a random draw.
+            </div>
           )}
         </div>
       )}

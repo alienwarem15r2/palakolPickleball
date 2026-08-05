@@ -17,7 +17,7 @@ export function StandingsScreen({ t }: { t: T }) {
             <strong>Pool {pool} standings</strong>
             <table>
               <thead>
-                <tr><th>#</th><th>Player</th><th>GP</th><th>W</th><th>Diff</th></tr>
+                <tr><th>#</th><th>Player</th><th>GP</th><th>W</th><th>Diff</th><th>Pts</th></tr>
               </thead>
               <tbody>
                 {rows.map((r, i) => (
@@ -27,11 +27,15 @@ export function StandingsScreen({ t }: { t: T }) {
                     <td>{r.gp}</td>
                     <td>{r.w}</td>
                     <td>{r.pd > 0 ? `+${r.pd}` : r.pd}</td>
+                    <td>{r.pf}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <div className="muted" style={{ marginTop: 6 }}>Top 4 (✓) qualify for finals.</div>
+            <div className="muted" style={{ marginTop: 6 }}>
+              Top 4 (✓) qualify for finals. Ranked by wins, then point differential (Diff),
+              then total points scored (Pts).
+            </div>
           </div>
         );
       })}

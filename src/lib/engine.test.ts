@@ -454,6 +454,32 @@ describe("standings", () => {
     expect(rows[0]).toMatchObject({ playerId: "p1", gp: 3, w: 3, pd: 13 });
   });
 
+  it("breaks a wins+diff tie on total points scored", () => {
+    const s = createInitialState();
+    // Same wins and same differential (+4), but different totals.
+    s.stats.p1 = { gp: 2, w: 1, pf: 30, pa: 26 }; // 30 points scored
+    s.stats.p2 = { gp: 2, w: 1, pf: 18, pa: 14 }; // 18 points scored
+    const ids = standings(s, "A").map((r) => r.playerId);
+    expect(ids.indexOf("p1")).toBeLessThan(ids.indexOf("p2"));
+  });
+
+  it("does not fall back to alphabetical order", () => {
+    const s = createInitialState();
+    // "Coy" sorts before "Ina" alphabetically but is behind on points scored.
+    const coy = s.players.find((p) => p.name === "Coy")!.id;
+    const ina = s.players.find((p) => p.name === "Ina")!.id;
+    s.stats[coy] = { gp: 2, w: 1, pf: 18, pa: 14 };
+    s.stats[ina] = { gp: 2, w: 1, pf: 30, pa: 26 };
+    const ids = standings(s, "A").map((r) => r.playerId);
+    expect(ids.indexOf(ina)).toBeLessThan(ids.indexOf(coy));
+  });
+
+  it("reports total points scored so the tiebreaker is visible", () => {
+    const s = createInitialState();
+    s.stats.p1 = { gp: 1, w: 1, pf: 11, pa: 7 };
+    expect(standings(s, "A")[0]).toMatchObject({ playerId: "p1", pd: 4, pf: 11 });
+  });
+
   it("only includes players from the requested pool", () => {
     const s = createInitialState();
     const rows = standings(s, "A");
@@ -475,15 +501,58 @@ describe("qualifyFinalists", () => {
     expect(res.tie).toBe(false);
   });
 
-  it("flags a tie when the 4th and 5th players are equal on wins AND point diff", () => {
+  // Every player gets a distinct win count within their own pool (spaced by 2,
+  // leaving room to insert a tie), so no pool reports an accidental dead heat
+  // and the test can place exactly the tie it wants to check.
+  function allDistinct() {
     const s = createInitialState();
+    for (const pool of ["A", "B"] as const) {
+      s.players
+        .filter((p) => p.pool === pool)
+        .forEach((p, i) => {
+          s.stats[p.id] = { gp: 5, w: 40 - i * 2, pf: 50, pa: 40 };
+        });
+    }
+    return s;
+  }
+
+  it("flags a tie only when the 4th and 5th are level on wins, diff AND points scored", () => {
+    const s = allDistinct();
     const a = s.players.filter((p) => p.pool === "A").map((p) => p.id);
-    a.forEach((id, i) => {
-      const w = i < 3 ? 10 : 5;
-      s.stats[id] = { gp: 5, w, pf: 30, pa: 20 };
-    });
-    const res = qualifyFinalists(s);
-    expect(res.tie).toBe(true);
+    // w=35 sits between the 3rd (36) and 6th (30), so this pair lands on the cut.
+    s.stats[a[3]] = { gp: 5, w: 35, pf: 30, pa: 20 };
+    s.stats[a[4]] = { gp: 5, w: 35, pf: 30, pa: 20 };
+    expect(qualifyFinalists(s).tie).toBe(true);
+
+    // Same wins and same differential, but more points scored — separable.
+    s.stats[a[4]] = { gp: 5, w: 35, pf: 40, pa: 30 };
+    expect(qualifyFinalists(s).tie).toBe(false);
+    // ...and the higher points-scored player takes the spot.
+    expect(qualifyFinalists(s).A).toContain(a[4]);
+    expect(qualifyFinalists(s).A).not.toContain(a[3]);
+  });
+
+  it("settles a dead heat at the cut with a draw, not list order", () => {
+    const s = allDistinct();
+    const a = s.players.filter((p) => p.pool === "A").map((p) => p.id);
+    // Top 3 are clear; the 4th and 5th are an exact dead heat.
+    const dead = [a[3], a[4]];
+    for (const id of dead) s.stats[id] = { gp: 5, w: 35, pf: 30, pa: 20 };
+    expect(qualifyFinalists(s).tie).toBe(true);
+
+    // Without a draw the outcome is fixed; with one, either player can get in.
+    const fixed = new Set(Array.from({ length: 20 }, () => qualifyFinalists(s).A[3]));
+    expect(fixed.size).toBe(1);
+
+    const drawn = new Set(
+      Array.from({ length: 60 }, () => qualifyFinalists(s, { drawTies: true }).A[3])
+    );
+    expect(drawn).toEqual(new Set(dead)); // both tied players do win it sometimes
+
+    // The three clear qualifiers are never displaced by the draw.
+    for (let run = 0; run < 20; run++) {
+      expect(qualifyFinalists(s, { drawTies: true }).A.slice(0, 3)).toEqual(a.slice(0, 3));
+    }
   });
 });
 
