@@ -1,7 +1,7 @@
 import { PlayerStats, Skill, Team } from "@/lib/types";
 import { OpenPlayGame, OpenPlayPlayer, OpenPlayState } from "./types";
 import { makeCourt } from "./state";
-import { assertScores, compareStanding, pairFour, partnerHistory, shuffled } from "@/lib/engine";
+import { assertScores, compareStanding, pairFour, pairKey, partnerHistory, shuffled } from "@/lib/engine";
 import type { StandingRow } from "@/lib/engine";
 
 // Unique id. Never reuses an id, so a new player can't inherit the record of
@@ -98,16 +98,85 @@ export function removePlayer(state: OpenPlayState, id: string): OpenPlayState {
 
 // The next four in line (for the "next up" display).
 export function nextUp(state: OpenPlayState): string[] {
-  return state.queue.slice(0, 4);
+  return chooseFour(state.queue, state.games, state.stats);
 }
 
-// Put the front four of the queue onto every open, empty court. Teams are chosen
-// by the tournament's mixer pairing: even skill split first, then partners who
-// haven't played together this session.
+// How often each pair of players has shared a court (as partners OR opponents).
+export function encounterCounts(
+  games: readonly { team1: Team; team2: Team }[]
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const g of games) {
+    const four = [...g.team1, ...g.team2];
+    for (let i = 0; i < four.length; i++) {
+      for (let j = i + 1; j < four.length; j++) {
+        const k = pairKey(four[i], four[j]);
+        counts[k] = (counts[k] ?? 0) + 1;
+      }
+    }
+  }
+  return counts;
+}
+
+// How many players beyond the front four are considered when picking a game.
+const MIX_WINDOW = 8;
+
+// Pick the four who take a free court.
+//
+// Taking the front four outright looks like fair FIFO, but when the headcount is
+// a multiple of four the same foursome leaves the court together, rejoins the
+// queue together, and comes back on together — so you spend all night playing
+// the same three people. Instead the player who has waited longest is always
+// included, and the other three are chosen from the front of the queue
+// preferring people they have shared a court with least. Ties fall back to queue
+// order, so nobody drifts down the line.
+export function chooseFour(
+  queue: string[],
+  games: readonly { team1: Team; team2: Team }[],
+  stats: Record<string, PlayerStats>
+): string[] {
+  if (queue.length < 4) return queue.slice(0, 4);
+  const gamesPlayed = (id: string) => stats[id]?.gp ?? 0;
+
+  // Fewest games first, then longest waiting.
+  const ordered = queue
+    .map((id, index) => ({ id, index }))
+    .sort((a, b) => gamesPlayed(a.id) - gamesPlayed(b.id) || a.index - b.index)
+    .map((x) => x.id);
+
+  const counts = encounterCounts(games);
+  const chosen = [ordered[0]];
+  while (chosen.length < 4) {
+    const remaining = ordered.filter((id) => !chosen.includes(id));
+    // Only consider players on the fewest games still waiting. Mixing must never
+    // let one person play twice while someone else is still waiting for their
+    // turn, so fairness constrains the pool and freshness picks within it.
+    const fewest = Math.min(...remaining.map(gamesPlayed));
+    const eligible = remaining
+      .filter((id) => gamesPlayed(id) === fewest)
+      .slice(0, MIX_WINDOW);
+
+    let best = eligible[0];
+    let bestScore = Infinity;
+    for (const id of eligible) {
+      const score = chosen.reduce((sum, c) => sum + (counts[pairKey(c, id)] ?? 0), 0);
+      if (score < bestScore) {
+        bestScore = score; // strict <, so equal scores keep queue order
+        best = id;
+      }
+    }
+    chosen.push(best);
+  }
+  return chosen;
+}
+
+// Put four players onto every open, empty court. Teams are then chosen by the
+// tournament's mixer pairing: even skill split first, then partners who haven't
+// played together this session.
 export function fillCourts(state: OpenPlayState): OpenPlayState {
   const history = partnerHistory(state.games);
-  // Sequential on purpose: each court consumes from the front of the queue, so
-  // the courts are filled in order and later ones see the shortened queue.
+  // Sequential on purpose: each court consumes from the queue, so the courts are
+  // filled in order and later ones see the shortened queue.
   let queue = [...state.queue];
   const courts: OpenPlayState["courts"] = [];
   for (const court of state.courts) {
@@ -116,8 +185,9 @@ export function fillCourts(state: OpenPlayState): OpenPlayState {
       courts.push(court);
       continue;
     }
-    const [team1, team2] = pairFour(queue.slice(0, 4), state.players, history);
-    queue = queue.slice(4);
+    const four = chooseFour(queue, state.games, state.stats);
+    const [team1, team2] = pairFour(four, state.players, history);
+    queue = queue.filter((id) => !four.includes(id));
     courts.push({ ...court, team1, team2, timerStartedAt: null });
   }
   return { ...state, courts, queue, updatedAt: Date.now() };

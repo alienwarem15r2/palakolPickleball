@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createInitialOpenPlayState } from "./state";
 import type { OpenPlayState } from "./types";
-import { checkIn, renamePlayer, setSkill, setResting, removePlayer, isPlaying, fillCourts, nextUp, recordGame, editGame, recomputeStats, setCourtCount, setCourtOpen, startSession, endSession, leaderboard } from "./engine";
+import { checkIn, renamePlayer, setSkill, setResting, removePlayer, isPlaying, fillCourts, nextUp, recordGame, editGame, recomputeStats, setCourtCount, setCourtOpen, startSession, endSession, leaderboard, chooseFour } from "./engine";
 
 describe("createInitialOpenPlayState", () => {
   it("starts idle with two open, empty courts and nobody checked in", () => {
@@ -377,5 +377,70 @@ describe("adding a court", () => {
     s = setCourtCount(s, 2);
     expect(s.courts[1].team1).not.toBeNull();
     expect(s.queue).toEqual([]);
+  });
+});
+
+describe("mixing — players must not get stuck with the same three people", () => {
+  // With a headcount divisible by four, taking the front four of a FIFO queue
+  // locks foursomes together: they leave the court as a block, rejoin as a
+  // block, and come back on as a block. This is the regression guard.
+  function playSession(playerCount: number, courts: number, gamesToPlay: number) {
+    let s: OpenPlayState = { ...createInitialOpenPlayState(), phase: "running" };
+    s = setCourtCount(s, courts);
+    for (let i = 1; i <= playerCount; i++) s = checkIn(s, `P${i}`, "novice");
+    s = fillCourts(s);
+    for (let g = 0; g < gamesToPlay; g++) {
+      const court = s.courts[g % courts];
+      if (court.team1 && court.team2) s = recordGame(s, court.id, 11, 7);
+    }
+    return s;
+  }
+
+  function metCounts(s: OpenPlayState) {
+    const met: Record<string, Set<string>> = {};
+    for (const g of s.games) {
+      const four = [...g.team1, ...g.team2];
+      for (const a of four) {
+        met[a] ??= new Set();
+        for (const b of four) if (a !== b) met[a].add(b);
+      }
+    }
+    return Object.values(met).map((set) => set.size);
+  }
+
+  it("12 players on 2 courts: everyone meets most of the room", () => {
+    const s = playSession(12, 2, 20);
+    const met = metCounts(s);
+    // Before the fix every player met exactly 3 people and never any others.
+    // Now it lands between 7 and 11 depending on the shuffle; 6 is a generous
+    // floor that still fails loudly if foursomes ever lock together again.
+    expect(Math.min(...met)).toBeGreaterThanOrEqual(6);
+  });
+
+  it("keeps games played even while mixing", () => {
+    const s = playSession(12, 2, 20);
+    const gp = s.players.map((p) => s.stats[p.id].gp);
+    expect(Math.max(...gp) - Math.min(...gp)).toBeLessThanOrEqual(1);
+  });
+
+  it("with exactly 8 on 2 courts the foursomes are fixed, but partners still rotate", () => {
+    // Nobody ever waits, so there is no one to swap in — the two groups of four
+    // are fixed by arithmetic. Mixing needs at least one spare group waiting.
+    // What the app can still do is rotate partners within each foursome.
+    const s = playSession(8, 2, 16);
+    const partners: Record<string, Set<string>> = {};
+    for (const g of s.games) {
+      for (const team of [g.team1, g.team2]) {
+        (partners[team[0]] ??= new Set()).add(team[1]);
+        (partners[team[1]] ??= new Set()).add(team[0]);
+      }
+    }
+    // each player should partner all three of the others on their court
+    expect(Math.min(...Object.values(partners).map((set) => set.size))).toBe(3);
+  });
+
+  it("the longest waiter is always included in the next game", () => {
+    const s = playSession(13, 2, 10);
+    expect(chooseFour(s.queue, s.games, s.stats)[0]).toBe(s.queue[0]);
   });
 });
