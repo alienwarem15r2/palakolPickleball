@@ -1,6 +1,6 @@
 "use client";
 import { useOpenPlay } from "@/hooks/useOpenPlay";
-import { recordGame, setCourtOpen } from "@/lib/openPlay/engine";
+import { courtHasGame, recordGame, setCourtOpen } from "@/lib/openPlay/engine";
 import { CourtTimer } from "@/components/CourtTimer";
 import { ScoreEntry } from "@/components/ScoreEntry";
 import { OpenPlayCourt } from "@/lib/openPlay/types";
@@ -20,7 +20,17 @@ function CourtCard({ t, court }: { t: T; court: OpenPlayCourt }) {
         {t.editing && (
           <button
             className="btn secondary"
-            onClick={() => t.commit((x) => setCourtOpen(x, court.id, !court.open))}
+            onClick={() => {
+              // Closing abandons the game in progress, so check first.
+              if (
+                court.open &&
+                courtHasGame(court) &&
+                !confirm(
+                  `${court.label} has a game on. Close it anyway?\n\nThe score won't be recorded and those four players go back to the front of the queue.`
+                )
+              ) return;
+              t.commit((x) => setCourtOpen(x, court.id, !court.open));
+            }}
           >
             {court.open ? "Close" : "Reopen"}
           </button>

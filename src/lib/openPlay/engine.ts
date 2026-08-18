@@ -291,20 +291,30 @@ export function editGame(
   return { ...state, games, stats: recomputeStats(state.players, games), updatedAt: Date.now() };
 }
 
-function courtHasGame(court: { team1: Team | null; team2: Team | null }): boolean {
-  return court.team1 !== null || court.team2 !== null;
+// Players taken off a court that is closing haven't had their game, so they
+// rejoin at the FRONT of the queue rather than the back.
+function returnToFrontOfQueue(queue: string[], ids: string[]): string[] {
+  return [...ids, ...queue.filter((id) => !ids.includes(id))];
 }
 
+// Closing or removing a court abandons any game on it and puts those players
+// back at the front of the queue. This deliberately does NOT refuse when a game
+// is in progress: courts auto-refill the instant a game is recorded, so a busy
+// court would never present a moment in which it could be closed — the
+// organiser would be permanently stuck. The UI confirms before calling this.
 export function setCourtCount(state: OpenPlayState, count: number): OpenPlayState {
   if (!Number.isInteger(count) || count < 1 || count > 6) {
     throw new Error("Court count must be between 1 and 6.");
   }
   if (count < state.courts.length) {
     const dropped = state.courts.slice(count);
-    if (dropped.some(courtHasGame)) {
-      throw new Error("That court has a game on — record it before removing the court.");
-    }
-    return { ...state, courts: state.courts.slice(0, count), updatedAt: Date.now() };
+    const displaced = dropped.flatMap((c) => [...(c.team1 ?? []), ...(c.team2 ?? [])]);
+    return fillCourts({
+      ...state,
+      courts: state.courts.slice(0, count),
+      queue: returnToFrontOfQueue(state.queue, displaced),
+      updatedAt: Date.now(),
+    });
   }
   const added = Array.from({ length: count - state.courts.length }, (_, i) =>
     makeCourt(state.courts.length + i + 1)
@@ -315,11 +325,26 @@ export function setCourtCount(state: OpenPlayState, count: number): OpenPlayStat
 export function setCourtOpen(state: OpenPlayState, courtId: string, open: boolean): OpenPlayState {
   const court = state.courts.find((c) => c.id === courtId);
   if (!court) throw new Error(`No court ${courtId}`);
-  if (!open && courtHasGame(court)) {
-    throw new Error("That court has a game on — record it before closing the court.");
-  }
-  const courts = state.courts.map((c) => (c.id === courtId ? { ...c, open } : c));
-  return fillCourts({ ...state, courts, updatedAt: Date.now() });
+
+  const displaced = open ? [] : [...(court.team1 ?? []), ...(court.team2 ?? [])];
+  const courts = state.courts.map((c) =>
+    c.id !== courtId
+      ? c
+      : open
+        ? { ...c, open: true }
+        : { ...c, open: false, team1: null, team2: null, timerStartedAt: null }
+  );
+  return fillCourts({
+    ...state,
+    courts,
+    queue: returnToFrontOfQueue(state.queue, displaced),
+    updatedAt: Date.now(),
+  });
+}
+
+// True when a game is in progress — the UI uses this to warn before closing.
+export function courtHasGame(court: { team1: Team | null; team2: Team | null }): boolean {
+  return court.team1 !== null || court.team2 !== null;
 }
 
 export function startSession(state: OpenPlayState): OpenPlayState {

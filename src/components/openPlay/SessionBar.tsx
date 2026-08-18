@@ -1,6 +1,6 @@
 "use client";
 import { useOpenPlay } from "@/hooks/useOpenPlay";
-import { setCourtCount, startSession, endSession } from "@/lib/openPlay/engine";
+import { courtHasGame, setCourtCount, startSession, endSession } from "@/lib/openPlay/engine";
 
 type T = ReturnType<typeof useOpenPlay>;
 
@@ -17,7 +17,17 @@ export function SessionBar({ t }: { t: T }) {
             <button
               key={n}
               className={`tab ${s.courts.length === n ? "active" : ""}`}
-              onClick={() => t.commit((st) => setCourtCount(st, n))}
+              onClick={() => {
+                // Dropping courts abandons any game on them, so check first.
+                const losingGames = s.courts.slice(n).filter(courtHasGame).length;
+                if (
+                  losingGames > 0 &&
+                  !confirm(
+                    `That removes ${losingGames} court${losingGames > 1 ? "s" : ""} with a game on.\n\nThose scores won't be recorded and the players go back to the front of the queue.`
+                  )
+                ) return;
+                t.commit((st) => setCourtCount(st, n));
+              }}
             >
               {n}
             </button>

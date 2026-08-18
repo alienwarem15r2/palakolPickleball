@@ -242,11 +242,39 @@ describe("courts", () => {
     expect(() => setCourtCount(s, 7)).toThrow(/between 1 and 6/);
   });
 
-  it("refuses to remove or close a court with a game on", () => {
-    // 8 players fill both courts, so shrinking would drop a court mid-game.
+  it("closing a busy court frees its players instead of refusing", () => {
+    // Courts auto-refill the moment a game is recorded, so a busy court would
+    // never offer a window in which it could be closed. Closing must work.
     const s = fillCourts(withPlayers(["a", "b", "c", "d", "e", "f", "g", "h"]));
-    expect(() => setCourtCount(s, 1)).toThrow(/game on/);
-    expect(() => setCourtOpen(s, s.courts[0].id, false)).toThrow(/game on/);
+    const wereOnCourt2 = [...s.courts[1].team1!, ...s.courts[1].team2!];
+    const closed = setCourtOpen(s, s.courts[1].id, false);
+
+    expect(closed.courts[1].open).toBe(false);
+    expect(closed.courts[1].team1).toBeNull();
+    // court 1's game is untouched, and the freed four are waiting at the front
+    expect(closed.courts[0].team1).toEqual(s.courts[0].team1);
+    expect(closed.queue.slice(0, 4).sort()).toEqual([...wereOnCourt2].sort());
+  });
+
+  it("shrinking the court count frees players from the courts it drops", () => {
+    const s = fillCourts(withPlayers(["a", "b", "c", "d", "e", "f", "g", "h"]));
+    const wereOnCourt2 = [...s.courts[1].team1!, ...s.courts[1].team2!];
+    const shrunk = setCourtCount(s, 1);
+
+    expect(shrunk.courts).toHaveLength(1);
+    expect(shrunk.courts[0].team1).toEqual(s.courts[0].team1); // court 1 undisturbed
+    expect([...shrunk.queue].sort()).toEqual([...wereOnCourt2].sort());
+  });
+
+  it("displaced players go to the front of the queue, not the back", () => {
+    // 10 players: 8 on court, 2 waiting. The four kicked off court 2 never got
+    // their game, so they lead the queue rather than being sent to the back.
+    // (Actual turn order is still decided by games played first, so this only
+    // matters between players on the same count.)
+    const s = fillCourts(withPlayers(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]));
+    const displaced = [...s.courts[1].team1!, ...s.courts[1].team2!];
+    const closed = setCourtOpen(s, s.courts[1].id, false);
+    expect(closed.queue.slice(0, 4).sort()).toEqual([...displaced].sort());
   });
 
   it("allows shrinking when the courts being dropped are empty", () => {
